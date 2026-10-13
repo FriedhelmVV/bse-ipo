@@ -5,7 +5,7 @@
 - 成品：`北交所打新工作台.html` —— 双击 `file://` 就能用，不联网、不装任何东西、不引任何 CDN。
 - 数据：**全部由同花顺 iFinD 自动取数生成**，不含任何手工抄录或演示数据；取不到的字段一律显示 `—`。
 - 更新：`tools/daily-update.cjs` 每晚 19:00 由 Windows 计划任务跑一遍（取数 → 构建 → 内联 → 断言 → 发布）。
-- 固定网址：由 `tools/publish-pages.cjs` 发布到 GitHub Pages（见 `tools/pages.json`）。
+- 固定网址：**<https://friedhelmvv.github.io/bse-ipo/>** —— 由 `tools/publish-pages.cjs` 发布到 GitHub Pages（仓库 `FriedhelmVV/bse-ipo`，配置见 `tools/pages.json`）。
 
 > 数据来源：同花顺 iFinD。仅供研究参考，**不构成任何投资建议**。
 
@@ -152,6 +152,7 @@ bse-ipo/
 │  ├─ verify-boot.cjs        四种加载/降级路径（用 12 条假数据）
 │  ├─ verify-serve.cjs       静态服务的真站点断言（路由/穿越/敏感路径）
 │  ├─ verify-publish.cjs     发布组包的离线验收（绝不发请求）
+│  ├─ verify-live.cjs        线上固定网址验收（只读 GET：标题编码/种子真伪/零 CDN/data 资源）
 │  ├─ audit-deliverable.cjs  交付前体检（修复是否在位 / 事故残留 / 种子真伪）
 │  └─ check-data-encoding.cjs 用 node 判断编码与中文是否正常（不靠 PS 肉眼）
 ├─ probe/                    iFinD 能力探针与原始返回存档
@@ -183,6 +184,7 @@ set N=C:\Users\p\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\node\bin\nod
 %N% build\verify-boot.cjs            :: 外部数据加载/降级四条路径
 %N% build\verify-serve.cjs           :: 静态服务真站点断言（mode=real）
 %N% build\verify-publish.cjs         :: 发布组包离线验收（不发任何请求）
+%N% build\verify-live.cjs            :: 线上网址验收（首次发布后加 --wait 等 Pages 构建）
 %N% build\audit-deliverable.cjs 北交所打新工作台.html   :: 交付体体检
 %N% tools\daily-update.cjs --no-publish                :: 全链路（不在本机跑取数时加 --only）
 ```
