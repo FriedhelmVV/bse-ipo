@@ -185,6 +185,7 @@ bse-ipo/
 5. **禁止硬编码演示数据**。缺数据就渲染 `—`，并在 `missing[]` 里记录。
 6. 发布前的闸门是 `build/verify.cjs`：**它不过，就不发布会**（`daily-update.cjs` 任一步失败即中止，`publish-pages.cjs` 排在最后）。
 7. 改完跑 `node build/test-build-seed.cjs`（离线回归）与 `node build/verify.cjs`。
+8. **布局约定：每个 Tab 内一律「图表在上、表格在下」。** 带 `<div class="chartbox">` 的卡片必须排在 `<table>` 卡片之前；工作台 Tab 的身份块（hero 大卡）仍置顶，其后的「首日表现速览」属于内容区，不参与这条约定。
 
 ### 交付前验收（照抄即可）
 
