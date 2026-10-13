@@ -4,7 +4,7 @@
 
 - 成品：`北交所打新工作台.html` —— 双击 `file://` 就能用，不联网、不装任何东西、不引任何 CDN。
 - 数据：**全部由同花顺 iFinD 自动取数生成**，不含任何手工抄录或演示数据；取不到的字段一律显示 `—`。
-- 更新：`tools/daily-update.cjs` 每晚 19:00 由 Windows 计划任务跑一遍（取数 → 构建 → 内联 → 断言 → 发布）。
+- 更新：`tools/daily-update.cjs` **每天早上 07:00** 由 Windows 计划任务跑一遍（取数 → 构建 → 内联 → 断言 → 发布）。
 - 固定网址：**<https://friedhelmvv.github.io/bse-ipo/>** —— 由 `tools/publish-pages.cjs` 发布到 GitHub Pages（仓库 `FriedhelmVV/bse-ipo`，配置见 `tools/pages.json`）。
 
 > 数据来源：同花顺 iFinD。仅供研究参考，**不构成任何投资建议**。
@@ -50,6 +50,19 @@ node tools\publish-pages.cjs --stage DIR:: 把站点落到 DIR 本地预览
 ```
 
 令牌按优先级取自环境变量 `GITHUB_TOKEN` 或文件 `tools\.gh-token`（一行，**别提交、别外发**）。
+
+### 5. 每天自动更新（计划任务）
+
+```bat
+node tools\schedule.cjs                        :: 查看状态（默认，只读）
+node tools\schedule.cjs --install              :: 注册：每天 07:00 跑 daily-update.cjs --catch-up --quiet
+node tools\schedule.cjs --install --time 07:30 :: 换一个时间
+node tools\schedule.cjs --run                  :: 立刻手工触发一次（等价于点「运行」）
+node tools\schedule.cjs --uninstall            :: 卸载
+node tools\schedule.cjs --dry-run              :: 只打印将注册的任务，绝不写系统
+```
+
+任务名 `BseIpoDailyUpdate`，`StartWhenAvailable=true`（07:00 没开机就开机后补跑）、`MultipleInstancesPolicy=IgnoreNew`、`ExecutionTimeLimit=PT45M`、`LogonType=InteractiveToken + LeastPrivilege`（**不需要管理员、不存密码**）。补跑由 `daily-update.cjs --catch-up` 的「距上次成功满 20 小时才跑」闸门兜住，不会一天跑两遍。
 
 ---
 
@@ -136,7 +149,7 @@ bse-ipo/
 │  ├─ fetch.cjs              iFinD 取数（唯一联网点）
 │  ├─ serve.cjs              只读静态服务
 │  ├─ publish-pages.cjs      发 GitHub Pages
-│  ├─ daily-update.cjs       每晚编排（取数→构建→内联→断言→发布）
+│  ├─ daily-update.cjs       每日编排（取数→构建→内联→断言→发布）
 │  ├─ schedule.cjs           注册/卸载计划任务 BseIpoDailyUpdate
 │  ├─ pages.json             仓库配置
 │  ├─ _peek.cjs              查看某只股票的原始缓存关键字段（排查用）
