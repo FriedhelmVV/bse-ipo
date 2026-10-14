@@ -62,7 +62,7 @@ node tools\schedule.cjs --uninstall            :: 卸载
 node tools\schedule.cjs --dry-run              :: 只打印将注册的任务，绝不写系统
 ```
 
-任务名 `BseIpoDailyUpdate`，`StartWhenAvailable=true`（07:00 没开机就开机后补跑）、`MultipleInstancesPolicy=IgnoreNew`、`ExecutionTimeLimit=PT45M`、`LogonType=InteractiveToken + LeastPrivilege`（**不需要管理员、不存密码**）。补跑由 `daily-update.cjs --catch-up` 的「距上次成功满 20 小时才跑」闸门兜住，不会一天跑两遍。
+任务名 `BseIpoDailyUpdate`，`StartWhenAvailable=true`（07:00 没开机就开机后补跑）、`MultipleInstancesPolicy=IgnoreNew`、`ExecutionTimeLimit=PT45M`、`LogonType=InteractiveToken + LeastPrivilege`（**不需要管理员、不存密码**）。补跑由 `daily-update.cjs --catch-up` 的闸门兜住：**当天（Asia/Shanghai 自然日）已经成功跑过就跳过，跨天一定跑** —— 所以 07:00 没开机、09:00 才开机，会立刻补一次；一天不会跑两遍。（早期版本用「距上次成功满 20 小时」，会把「前一天晚上手工跑过一次」之后的第二天早上那次也吞掉，已改。）
 
 ---
 
@@ -186,6 +186,12 @@ bse-ipo/
 6. 发布前的闸门是 `build/verify.cjs`：**它不过，就不发布会**（`daily-update.cjs` 任一步失败即中止，`publish-pages.cjs` 排在最后）。
 7. 改完跑 `node build/test-build-seed.cjs`（离线回归）与 `node build/verify.cjs`。
 8. **布局约定：每个 Tab 内一律「图表在上、表格在下」。** 带 `<div class="chartbox">` 的卡片必须排在 `<table>` 卡片之前；工作台 Tab 的身份块（hero 大卡）仍置顶，其后的「首日表现速览」属于内容区，不参与这条约定。
+9. **悬浮提示约定：柱子/点只显示「新股简称 + 对应数据」。** 提示内容由 `tipRows()` / `tipFor()` 生成，经 `drawChart` 的 `opt.tipName` 开关进入「只有简称 + 一个数值」模式（不带日期、不带附加行）；目前 `chartFundTrend()`（打新资金）与 `chartSubsTrend()`（有效申购户数）都用这个模式，指标名分别是 `打新资金(亿元)`、`有效申购户数(户)`。
+   ⚠️ **`attrEsc()` 必须转义 `< >`，不能删除它们**：`data-tip` 属性里放的是 HTML 片段（`<div class="tt">…</div><div class="tr">…</div>`），`attachTip()` 用 `innerHTML` 渲染它。早期版本写成 `.replace(/[<>]/g,'')`，尖括号被删掉后提示会显示成一串裸文本（`div class="tt"星图测控/div…`）。正确写法（顺序不能变）：
+   ```js
+   function attrEsc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+   ```
+   `build/verify.cjs` 会检查这条（转义方式 + 顺序 + 两张趋势图用了 `tipName:true` 且不再拼 `sub` 附加行），`build/verify-real.cjs` 会逐根柱子核对提示的实际内容（标题必须是真实新股简称、恰好一行「指标名 + 数值」、不含日期/顶格资金/中签率/获配户数）。
 
 ### 交付前验收（照抄即可）
 
