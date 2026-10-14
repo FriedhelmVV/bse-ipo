@@ -100,7 +100,7 @@ node build\verify.cjs
 
 | Tab | 内容 |
 | --- | --- |
-| 🧰 打新工作台 | 今日/近期可申购、待上市，含顶格资金、中签门槛、状态 |
+| 🧰 打新工作台 | 今日/近期可申购、待上市，含顶格资金、中签门槛、状态；下方五张详情卡（见下） |
 | 📊 打新数据 | 全量打新记录表，点表头排序，可按代码/名称搜索 |
 | 💰 资金档位分布 | 按顶格资金分档，标出近期重点与参考性弱的早期数据 |
 | 🚀 上市首日表现 | 首日开/高/低/收/均价、涨跌幅、换手率、临停、T+1、成交额 |
@@ -108,6 +108,20 @@ node build\verify.cjs
 - 四个主题：经典深色 / 浅色白底 / 米白纸感 / 深蓝石板，存 `localStorage`。
 - 表格点表头排序；窄屏（<560px）卡片单列、表格内横向滚动。
 - 图表是手写 SVG/CSS，**不引任何图表库**。
+
+### 打新工作台的五张详情卡
+
+只有 `status !== 'listed'`（即还没上市）的标的才渲染这五张卡；已上市的不再给申购测算。
+
+| 卡片 | 内容 | 数据来源 |
+| --- | --- | --- |
+| 打新门槛测算 | 16 档「参与打新资金」→ 1 手正股门槛、2~5 手门槛、顶格申购中签股数。三个输入框（参与资金 / 网上发行数量 / 顶格资金）可改，表格实时重算 | 页面按 `plan` 实时算，**不预生成进数据** |
+| 收益率弹性测算 | 在假设的 PE 区间（起始 PE / 步长可改）下，上半「踩门槛中 1 手」、下半「顶格申购」的收益率。**属情景假设，非预测** | 同上 |
+| 可比公司估值 | 可比公司 / 证券代码 / PE / PB / 总市值 + 算术平均行 + 「发行 PE 较行业静态 PE 折价/溢价百分之几」 | 名单 `get_stock_info` 的官方「可比公司」字段；估值 `get_stock_info`；行业 PE `get_stock_events` |
+| 公司基本情况 | 公司全称 / 成立日期 / 注册资本 / 注册地址 / 所属行业 / 实际控制人 / 保荐机构 / 员工总数 / 发行后总股本 / 主营业务 + 所属概念、主要产品名条 | `get_stock_info` 结构化字段为主，公告片段只补空洞 |
+| 财务趋势 | 近三年 + 最新一期营收与净利柱图（`class="chartbox inline-chart"`）+ 6 列表（报告期 / 营收 / 净利 / 营收同比 / 毛利率 / ROE） | `get_stock_financials` |
+
+> 门槛测算与弹性测算的公式逐字对齐参考站（Excel `A12:G26` 与 `A28:F46`），见 [`SCHEMA.md`](SCHEMA.md) §五·补。**估值与财务都是「发行公告口径」，不是实时行情**；取不到的一律渲染 `—`。
 
 ---
 
@@ -121,6 +135,14 @@ node build\verify.cjs
 | 网上发行数量 / 中签率 / 有效申购户数 / 获配户数 | `get_stock_events`（**仅已上市**） |
 | 上市日期 / 行业 | `get_stock_info` |
 | 首日及 T+1 开高低收、涨跌幅、换手率、成交额、成交量、流通市值 | `get_stock_performance`（按明确日期区间逐只取） |
+| 首发时所属行业静态市盈率 | `get_stock_events`（**仅未上市标的取**） |
+| 公司全称 / 成立日期 / 注册资本 / 注册地址 / 主营业务 / 实际控制人 / 保荐机构 / 所属行业 / 所属概念 / 员工总数 | `get_stock_info` 两次结构化问法 |
+| 近三年 + 最新一期营收 / 净利 / 营收同比 / 毛利率 / ROE | `get_stock_financials`（报告期必须显式写「最近三年」） |
+| 可比公司名单 | `get_stock_info` 的官方「可比公司」字段（**不是**从公告正文正则捞的） |
+| 可比公司 PE / PB / 总市值 | `get_stock_info`（按公司**全称**问，代码由 iFinD 回填） |
+| 发行股数 / 发行后总股本 | `news.search_notice` 公告片段（不稳定，取不到即 `—`） |
+
+- 上述「基本面」六行只对 `status !== 'listed'` 的标的取数，落在 `data/raw/<code>.fund.json`，成品里是 `record.fund`（详见 [`SCHEMA.md`](SCHEMA.md) §五·补二）。
 
 - 顶格资金 = `网上申购数量上限 × 首发价格 ÷ 1e4`（万）。该公式已用参考站样本逐字校验通过。
 - 首日均价 = `首日成交额 ÷ 首日成交量`。**注意**：query 里带「成交均价」返回的是整段**区间**均价，不能当单日均价，故不取。
@@ -142,7 +164,7 @@ bse-ipo/
 │  ├─ PROBE-FINDINGS.md      iFinD 能力实测证据与缺口表
 │  └─ shots/                 无头 Chrome 验收截图与 verify*.json
 ├─ data/
-│  ├─ raw/                   取数原始缓存（universe.json + <code>.json + _errors.json）
+│  ├─ raw/                   取数原始缓存（universe.json + <code>.json + <code>.fund.json + _errors.json）
 │  ├─ ipo.json / ipo.js      成品数据
 │  └─ manifest.js            索引与 hash
 ├─ tools/
@@ -186,20 +208,28 @@ bse-ipo/
 6. 发布前的闸门是 `build/verify.cjs`：**它不过，就不发布会**（`daily-update.cjs` 任一步失败即中止，`publish-pages.cjs` 排在最后）。
 7. 改完跑 `node build/test-build-seed.cjs`（离线回归）与 `node build/verify.cjs`。
 8. **布局约定：每个 Tab 内一律「图表在上、表格在下」。** 带 `<div class="chartbox">` 的卡片必须排在 `<table>` 卡片之前；工作台 Tab 的身份块（hero 大卡）仍置顶，其后的「首日表现速览」属于内容区，不参与这条约定。
+   - **例外**：`class="chartbox inline-chart"` 是「跟着自己后面那张小表」的内联小图（工作台 Tab 的「财务趋势」卡里两张营收/净利柱图），不受这条约定约束，可以出现在表格之后。`build/verify.cjs` 的布局闸门只认看板级 `chartbox`（正则 `class="chartbox(?![^"]*inline-chart)`）。
 9. **悬浮提示约定：柱子/点只显示「新股简称 + 对应数据」。** 提示内容由 `tipRows()` / `tipFor()` 生成，经 `drawChart` 的 `opt.tipName` 开关进入「只有简称 + 一个数值」模式（不带日期、不带附加行）；目前 `chartFundTrend()`（打新资金）与 `chartSubsTrend()`（有效申购户数）都用这个模式，指标名分别是 `打新资金(亿元)`、`有效申购户数(户)`。
    ⚠️ **`attrEsc()` 必须转义 `< >`，不能删除它们**：`data-tip` 属性里放的是 HTML 片段（`<div class="tt">…</div><div class="tr">…</div>`），`attachTip()` 用 `innerHTML` 渲染它。早期版本写成 `.replace(/[<>]/g,'')`，尖括号被删掉后提示会显示成一串裸文本（`div class="tt"星图测控/div…`）。正确写法（顺序不能变）：
    ```js
    function attrEsc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
    ```
    `build/verify.cjs` 会检查这条（转义方式 + 顺序 + 两张趋势图用了 `tipName:true` 且不再拼 `sub` 附加行），`build/verify-real.cjs` 会逐根柱子核对提示的实际内容（标题必须是真实新股简称、恰好一行「指标名 + 数值」、不含日期/顶格资金/中签率/获配户数）。
+10. **基本面数据（`record.fund`）的口径不能自作主张**：
+    - 金额与同比列**同名**（`营业收入` vs `营业收入(同比增长率)`，`normHeader` 会剥掉括号）→ `parseMdTables` 重名键存成 `key#2`，`parseFinancials` 再按量级区分（`|v| ≥ 1e5` 是金额、`≤ 1e4` 是比率）。改这里必须两个函数一起改。
+    - `company` 的合并优先级是 **`get_stock_info` 结构化字段 > 公告片段**（`mergeCompany(parseCompanyFromNotice(txt), parseCompanyFromInfo(ans))`）。反了就等着公告片段里的偶发垃圾覆盖好数据。
+    - 取数**禁止猜股票代码**，也**不要用 `search_stocks` 做「简称 → 代码」解析**（多个名字一起问只回一条）。一律把公司**全称**丢给 `get_stock_info`。
+    - 财务问法必须显式写「最近三年」，否则 iFinD 只给最新 MRQ；ROE 必须显式在 query 里要「净资产收益率」。
+    - `fund` 只对未上市标的产出；`noticeText` / `compCandidates` 是审计用的中间态，**绝不进 `data/ipo.json`、更不进内联 seed**（公告正文里偶有 U+FFFD，会污染源码文本卫生闸门）。
+    - 「可比公司」名单来自 `get_stock_info` 的官方字段，名单里本来就有未上市/非 A 股主体，取不到代码是正常的，页面显示「未匹配」而不是报错。
 
 ### 交付前验收（照抄即可）
 
 ```bat
 set N=C:\Users\p\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\node\bin\node.exe
 %N% build\test-build-seed.cjs        :: 离线回归：派生公式 / status 三分法（不联网）
-%N% build\verify.cjs                 :: 契约闸门：45 项，含内联 seed 与 ipo.json 顶层键逐项一致
-%N% build\verify-real.cjs            :: 真实 93 条渲染：4 Tab 数值齐备 + 无乱码（无头 Chrome）
+%N% build\verify.cjs                 :: 契约闸门：58 项，含内联 seed 与 ipo.json 顶层键逐项一致
+%N% build\verify-real.cjs            :: 真实 93 条渲染：4 Tab 数值齐备 + 工作台五张详情卡（无头 Chrome）
 %N% build\verify-real.cjs --shot     :: 同上，并出 docs/shots/real-*.png
 %N% build\verify-boot.cjs            :: 外部数据加载/降级四条路径
 %N% build\verify-serve.cjs           :: 静态服务真站点断言（mode=real）
