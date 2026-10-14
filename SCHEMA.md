@@ -151,6 +151,7 @@ parse 后 `{ code:1, msg:'success', data:{ answer:'<markdown 表格>', indicator
 | `firstDay` | object\|null | — | 见下 | null |
 | `t1ChgPct` | number\|null | % | 首日之后**第一个有涨跌幅的交易日**（跳过周末/停牌行） | null |
 | `floatMktCapYi` | number\|null | 亿元 | 优先 `raw.perf.days[0].floatMktCap/1e8`；无则 `firstDay.close*onlineIssueShares/1e8`（口径：网上发行股本） | null |
+| `plan` | object | — | 发行方案参数，供页面**实时**算「打新门槛测算 / 收益率弹性测算」，见 §五·补 | 必填 |
 | `derived` | string[] | — | 本记录中由算法算出的字段名列表 | `[]` |
 | `missing` | string[] | — | 本记录缺失字段名列表 | `[]` |
 
@@ -199,6 +200,161 @@ if maxWinShares >= 100:  shatterFundWan = null        // 顶格已够整股，�
 else:                    shatterFundWan = fd(100*issuePrice/(winRate/100)/1e4)
 ```
 并同步写入 `derived`。页面标题上标「(估算)」。**不允许把估算值渲染成精确值。**
+
+## 五·补 发行方案参数 `plan` 与两张测算表（页面实时计算）
+
+对标参考站「实际发行打新门槛测算 / 收益率弹性测算」，**整张表不进 `ipo.json`**（会膨胀十几倍），
+只在每条记录里存参数，由页面 JS 按下面公式实时渲染；用户可改输入框即时重算。
+
+```jsonc
+"plan": {
+  "issuePrice": 20.3,            // 发行价（元）
+  "peRatio": 12.0,               // 摊薄发行市盈率（倍）
+  "epsAfter": 1.6917,            // 发行后 EPS（元/股）= issuePrice / peRatio
+  "onlineIssueWan": null,        // 实际网上发行数量（万股），未披露时 null
+  "onlineIssueWanUsed": 1800,    // 两表实际使用的值 = onlineIssueWan ?? subscribeCapShares*20/1e4
+  "onlineIssueWanSource": "estimate",  // 'actual' | 'estimate' | null
+  "subscribeCapShares": 900000,  // 网上申购上限（股）
+  "topFundWan": 1827,            // 顶格申购资金（万元）= subscribeCapShares*issuePrice/1e4
+  "lotFundWan": null,            // 1 手正股门槛（万元），需中签率；未出配售结果时 null
+  "fundBaseYi": 11500,           // 「参与打新资金」默认档（亿元）
+  "fundBaseSource": "estimate"   // 'actual'（用该股 totalFundYi 四舍五入）| 'estimate'（近 20 只中位数取整到百亿）
+}
+```
+
+**⭐「网上发行数量」兜底估算的口径**：北交所规则是「网上申购上限 = 网上发行数量的 1/20」（即 5%）。
+全量实测 92 条里 **90 条严格 ×20**，另 2 条 ×25（`920186.BJ` 中科仪、`920072.BJ` 科莱瑞迪）。
+所以配售结果未披露时用 `subscribeCapShares*20/1e4` 估算，并必须把 `onlineIssueWanSource` 标成
+`"estimate"`，页面在表头标注「网上发行数量为估算」。实测校对：远大健科 `900000*20/1e4 = 1800` 万股，
+与参考站内嵌值 `1800.0` 万股逐字相同。
+**`epsAfter` 的推导与校验**：`发行市盈率(摊薄) = 发行价 ÷ 发行后EPS`，反推 `epsAfter = issuePrice/peRatio`。
+实测：远大健科 `20.30/12.00 = 1.6917`，×6900 万股 = 1.167 亿 ≈ 其 2025 扣非 1.17 亿 ✓；
+文峰光电 `11.45/13.51 = 0.8475`，×8000 万股 = 0.678 亿 ≈ 其 2025 扣非 0.68 亿 ✓。
+
+#### 打新门槛测算（页面函数 `thrRows(fund, online, top)`，复刻参考站/Excel A12:G26）
+
+单位：`fund` 参与打新资金**亿元**、`online` 网上发行总数**万股**、`top` 顶格申购资金**万元**。
+`f = fund`、`on = online`、`tp = top`。
+
+```js
+var A = f + 100 * i;                              // 参与打新资金，每 +100 一行，共 16 行
+var C = 100 * A / on;                             // 1手正股门槛(万元) = 100×打新资金/网上发行总数
+var B = (C >= tp) ? 100 : Math.ceil(tp / C) * 100;// 顶格申购中签股数：门槛≥顶格→全员碎股=100；否则 ROUNDUP(顶格/1手门槛)×100
+// N 手门槛（N=2,3,4,5）= (N*C < tp) ? N*C : "无"
+```
+表头：`参与打新资金（亿元） | 顶格申购中签股数 | 1手正股门槛(万元) | 2手 | 3手 | 4手 | 5手`。
+默认输入 `fund = plan.fundBaseYi`、`online = plan.onlineIssueWanUsed`、`top = plan.topFundWan`。
+
+#### 收益率弹性测算（页面函数 `elasticRows(pe0, step, eps, price, online, top, fund0)`，复刻 Excel A28:F46）
+
+默认 `pe0 = 20`、`step = 5`、`eps = plan.epsAfter`、`price = plan.issuePrice`、`fund0 = plan.fundBaseYi`。
+
+```js
+var pe     = [pe0, pe0+step, pe0+2*step, pe0+3*step, pe0+4*step];
+var priceJ = pe.map(p => p * eps);                 // 对应股价 = PE × 发行后EPS
+var upJ    = priceJ.map(pj => pj / price - 1);     // 涨幅 = 对应股价 ÷ 发行价 − 1
+var funds  = [0,3,6,9,12,15].map(k => f0 + 100*k); // 取门槛表的第 1/4/7/10/13/16 行
+// 每个资金档位 f：c1 = 100*f/online；b = (c1>=top) ? 100 : Math.ceil(top/c1)*100
+//   踩门槛中 1 手收益率 = price*up*100/c1/10000   （百分比，toFixed(4)）
+//   顶格申购收益率     = price*up*b/top/10000
+```
+表结构：上半「踩门槛中 1 手的收益率弹性测算」四行 = `给予20XX年业绩PE / 对应股价(元) / 涨幅 / <各资金档位>`；
+下半「顶格申购的收益率弹性测算」两行 = `涨幅 / <各资金档位>`。输入框：起始 PE、PE 步长、发行后 EPS、发行价。
+
+⚠ 两张表的 `fundBaseYi` 在 `fundBaseSource === 'estimate'` 时是**估算档位**，页面必须标注；
+`epsAfter` 是从市盈率反推的，公司实际扣非 EPS 以财报为准。
+
+## 五·补二 基本面数据 `fund`（可比公司估值 / 公司基本面 / 财务趋势）
+
+数据源全部是 iFinD，**只对未上市新股取**（`status !== 'listed'`）；已上市记录的 `fund` 恒为 `null`，
+页面在工作台 Tab 的「发行方案详情」只对未上市标的渲染这几张卡。
+
+### 取数：`data/raw/<code>.fund.json`（由 `tools/fetch.cjs` 的 fund 通道写）
+
+```json
+{
+  "code": "920285.BJ", "name": "远大健科", "fetchedAt": "2026-10-14T19:30:00+08:00",
+  "fundFetchedOn": "20261014",
+  "industryPe": 21.83,
+  "company": {
+    "fullName": "远大健康科技(天津)股份有限公司",
+    "founded": "2001-03-21",
+    "address": "天津市静海区经济开发区金海道29号",
+    "controller": "魏恩雨", "controllerType": "个人", "controllerPct": 39.4725,
+    "business": "冰箱滤水器、泳池类滤芯、家用净水滤芯、咖啡机滤芯、整机等多品类净水器件及相关功能材料的研发、生产和销售。",
+    "sponsor": "光大证券股份有限公司",
+    "industryThs": "家用电器", "industrySw": "家用电器",
+    "regCapital": "5100.0万", "employees": 604,
+    "concepts": ["专精特新", "京津冀一体化", "人民币贬值受益", "净水概念", "跨境电商"],
+    "issueSharesWan": null, "postIssueSharesWan": 6900,
+    "products": []
+  },
+  "fin": [
+    { "date": "2025-12-31", "revenue": 1010940000, "netProfit": 118390000, "deducted": null,
+      "revenueYoy": 0.6282, "profitYoy": null, "grossMargin": 54.8673, "roe": 26.85 }
+  ],
+  "comps": [ { "name": "开能健康科技集团股份有限公司", "code": "300272.SZ",
+               "pe": 64.3032, "pb": 2.8434, "mktCapYi": 36.0156, "shortName": "开能健康" } ],
+  "compCandidates": ["A. O. Smith Corporation", "厦门建霖智慧家居股份有限公司"],
+  "notice": { "title": "远大健科:向不特定合格投资者公开发行股票并在北京证券交易所上市发行公告", "date": "2026-10-13" },
+  "noticeText": "……（公告正文拼接，截断 20000 字；**只留在 raw 里，不进 data/ipo.json、不进内联 seed**）",
+  "missing": ["company.issueSharesWan", "company.products"]
+}
+```
+
+⚠ `noticeText` 里偶有上游的 U+FFFD 替换字符（如 `科目具体情况及分<U+FFFD><U+FFFD><U+FFFD>说明`），解析前统一 `replace(/\uFFFD+/g,'')`；
+它也**绝不能进成品**，否则会污染 `build/verify.cjs` 的「源码文本卫生」闸门。
+
+**取数口径（实测见 `probe/probe-fund-out/` 与 `docs/PROBE-FINDINGS-FUNDAMENTALS.md`）**
+| 字段 | 通道 | 说明 |
+|---|---|---|
+| `industryPe` | `stock.get_stock_events`，问法 `<code>的行业平均市盈率、首发时所属行业市盈率` | 实锤指标名 **`首发时所属行业市盈率`**；远大健科 21.83、文峰光电 22.33、南方乳业 21.45、莫森泰克 22.47 |
+| `company.*`（结构化，**权威**） | `stock.get_stock_info` **两次**：`<code>的公司全称、成立日期、注册资本、注册地址、主营业务、实际控制人` 与 `<code>的保荐机构、所属行业、所属概念、员工人数` | 列名 `公司中文名称 / 成立日期 / 注册资本 / 注册地址 / 主营业务 / 实际控制人 / 实际控制人类型 / 实际控制人持股比例 / 首发保荐人 / 所属同花顺行业 / 所属申万行业 / 所属概念 / 员工总数`。⚠ **成立日期是 `20010321` 紧凑格式**，要转 `YYYY-MM-DD` |
+| `company.issueSharesWan` / `postIssueSharesWan` / `products` | `news.search_notice`（公告片段兜底） | 公告片段**每次返回的段落都不一样**，这三项经常为 null，属正常；`time_start/time_end` 必填且窗口要 ~13 个月（-400 天） |
+| `fin` | `stock.get_stock_financials`，问法 `<code>最近三年的营业收入、扣除非经常性损益后的归属母公司股东净利润、净利润、销售毛利率、净资产收益率` | 返回**按报告期逐行**（20231231/20241231/20251231），单位元。⚠ 金额列与同比列**归一化后同名**（`营业收入` vs `营业收入(同比增长率)` → `parseMdTables` 存成 `key#2`），取值必须按量级区分：金额 `|v| ≥ 1e5`、比率 `|v| ≤ 1e4` |
+| `comps[].name` | `stock.get_stock_info`，问法 `<code>的可比公司、竞争公司` | **官方字段**，逗号分隔的**公司全称**（远大健科 13 家、文峰光电 11 家、南方乳业 10 家）；比从招股书正文正则捞名字可靠得多 |
+| `comps[].code/pe/pb/mktCapYi` | `stock.get_stock_info`，全称 **5 个一批**：`<全称1>、<全称2>…的市盈率、市净率、总市值` | **禁止用 `search_stocks` 做「名称→代码」解析**（多个名字只回一条）；**禁止猜代码**（猜 `301469.SZ` 拿望圆科技，返回的是「恒达新材」）。解析不到的（未上市/非 A 股）不进 `comps`，留在 `compCandidates` |
+| 全部 | 每只 **8 次调用** | 实测 4 只 95~110s（间隔 2500ms，含重试退避 5s/15s/45s） |
+
+**`company` 的合并优先级**：结构化字段（`get_stock_info`）优先，公告片段只补空洞
+（`mergeCompany(parseCompanyFromNotice(noticeText), infoCompany)`）。不要反过来——公告片段每次不一样。
+
+### 成品：`BseIpoRecord.fund`
+
+```json
+"fund": {
+  "industryPe": 21.83,
+  "peDiscountPct": -45.03,
+  "comps": [ { "name": "开能健康科技集团股份有限公司", "code": "300272.SZ",
+               "pe": 64.3032, "pb": 2.8434, "mktCapYi": 36.0156 } ],
+  "compsMeanPe": 34.15, "compsMeanPb": 2.04,
+  "company": {
+    "fullName": "远大健康科技(天津)股份有限公司", "founded": "2001-03-21",
+    "address": "天津市静海区经济开发区金海道29号",
+    "controller": "魏恩雨", "controllerType": "个人", "controllerPct": 39.4725,
+    "business": "…", "sponsor": "光大证券股份有限公司",
+    "industryThs": "家用电器", "industrySw": "家用电器",
+    "regCapital": "5100.0万", "employees": 604,
+    "concepts": ["专精特新", "…"], "products": [],
+    "issueSharesWan": null, "postIssueSharesWan": 6900
+  },
+  "fin": [ { "…同 raw…" } ],
+  "notice": { "title": "…", "date": "…" },
+  "missing": ["company.issueSharesWan", "company.products"]
+}
+```
+
+⚠ `comps[].name` 在成品里是**官方全称**（与 raw 一致），页面直接用；`shortName` 只留在 raw。
+⚠ `noticeText` / `compCandidates` **不进成品**（成品只保留 `notice:{title,date}`）。
+
+**规则（`build/build-seed.cjs` 负责，`build/verify.cjs` 逐条复算）**
+- 只有 `status !== 'listed'` 的记录才有 `fund`；其余为 `null`。
+- `peDiscountPct = round((peRatio / industryPe - 1) * 100, 2)`；`peRatio` 或 `industryPe` 缺任一 → `null`。
+- `compsMeanPe` = `comps` 中 `pe` 非 null 者的**算术平均**（2 位）；同理 `compsMeanPb`。样本为 0 → `null`。
+- `comps` 里 `code` 解析不到的公司**保留在数组里**（`code:null`、估值全 `null`），让页面能显示「招股书披露但未上市/未匹配」。
+- `fin` 排序：按 `date` 升序；只保留最近 3 期年报 + 之后的最新非年报期。
+- 任何缺项一律 `null`，页面渲染 `—`；`missing[]` 记录缺失路径。
+- ⚠ 页面必须标注：可比公司名单与行业市盈率**取自发行公告/招股书口径**，均值为算术平均，非指数化。
 
 ## 六、缺失即 `null`，绝不编造
 
