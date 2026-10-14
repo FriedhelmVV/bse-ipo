@@ -155,9 +155,14 @@ parse 后 `{ code:1, msg:'success', data:{ answer:'<markdown 表格>', indicator
 | `missing` | string[] | — | 本记录缺失字段名列表 | `[]` |
 
 `status` 判定（三分法，`today` 取 Asia/Shanghai 当日）：
-- `upcoming`：`subscribeDate` 为空，或 `subscribeDate > 今天`（含"明天申购"）
-- `subscribed`：`subscribeDate <= 今天` 且（`listingDate` 为空 **或** `listingDate > 今天`）
+- `upcoming`：`subscribeDate` 为空，或 `subscribeDate >= 今天`（含"明天申购"和**"就是今天申购"**）
+- `subscribed`：`subscribeDate < 今天` 且（`listingDate` 为空 **或** `listingDate > 今天`）
 - `listed`：`listingDate <= 今天`
+
+⚠ **申购日当天算 `upcoming`，不算 `subscribed`**：网上申购当天 9:15–15:00 才真正下单，写成
+`subscribed` 会让工作台在当天显示「已申购，等待上市公告」，把当天最该看的那只标的说反。
+页面 hero 里 `d===0 ? '就是今天申购'` 这个分支就是按这个语义写的（早期规则下它取不到）。
+实测：`today=2026-10-14` 且 `920285.BJ` 远大健科 `subscribeDate=2026-10-14` → `upcoming`。
 
 ⚠ 不能只看"`listingDate` 是否非空"：已公告上市日但日期在未来的新股（实测 `920162.BJ` 莫森泰克
 `listingDate=2026-10-15`，而 `today=2026-10-13`）此刻**还没有首日行情**，必须算 `subscribed`，
