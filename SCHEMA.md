@@ -134,6 +134,7 @@ parse 后 `{ code:1, msg:'success', data:{ answer:'<markdown 表格>', indicator
 | `subscribeDate` | `YYYY-MM-DD`\|null | — | raw.events.subscribeDate | null |
 | `listingDate` | `YYYY-MM-DD`\|null | — | raw.profile.listingDate ?? universe.listingDate | null |
 | `status` | `'upcoming'\|'subscribed'\|'listed'` | — | 见下 | 必填 |
+| `listingToday` | boolean | — | `status==='listed' && listingDate === today`，见下 | 必填 |
 | `issuePrice` | number\|null | 元 | raw.events.issuePrice | null |
 | `peRatio` | number\|null | 倍 | raw.events.peRatio | null |
 | `subscribeCapShares` | number\|null | 股 | raw.events.subscribeCapShares | null |
@@ -164,6 +165,26 @@ parse 后 `{ code:1, msg:'success', data:{ answer:'<markdown 表格>', indicator
 `subscribed` 会让工作台在当天显示「已申购，等待上市公告」，把当天最该看的那只标的说反。
 页面 hero 里 `d===0 ? '就是今天申购'` 这个分支就是按这个语义写的（早期规则下它取不到）。
 实测：`today=2026-10-14` 且 `920285.BJ` 远大健科 `subscribeDate=2026-10-14` → `upcoming`。
+
+### `listingToday` —— 「当天上市」（`status` 仍是 `listed`，但详情不删）
+
+`listingToday: boolean`，`true` 当且仅当 `status === 'listed' && listingDate === 今天`。
+它是 `listed` 的**子类**，不新增枚举值：`counts`、`打新数据` Tab、`首日表现` Tab 全部照旧把它当已上市。
+
+它存在的唯一理由：**上市当天，工作台仍要为这只标的给出和「已申购未上市」一模一样的完整分析**
+（发行方案摘要 + 门槛测算 / 弹性测算 / 可比公司估值 / 公司基本情况 / 财务趋势 五张卡）。
+次日起 `listingDate < 今天`，`listingToday` 变回 `false`，它自动退出申购清单，无需额外清理。
+
+联动三处（`build/verify.cjs` 会逐条断言，缺一处就报错）：
+
+| 位置 | 规则 |
+|---|---|
+| `build/build-seed.cjs` | `buildFund(fr, status, peRatio, listingToday)`：`status === 'listed' && !listingToday` 才返回 `null` |
+| `tools/fetch.cjs` | fund 通道目标过滤是 `!it.listingDate \|\| it.listingDate >= todayDash`（**`>=`**，当天上市的也要取） |
+| `北交所打新工作台.html` | `isListingToday(r)` / `inWorkbench(r)`；`ipocBodyHTML` 与 `detailCardsHTML` 的守卫是 `statusOf(r)==='listed' && !isListingToday(r)`；状态文案 `statusTxtOf(r)` 给「今日上市」 |
+
+⚠ 判定一律读种子里的 `r.listingToday`，**不要在页面里用浏览器当天时间重算** —— 页面在种子重建
+（每天 07:00）之前打开时，浏览器日期会和种子生成日差一天，两边会打架。
 
 ⚠ 不能只看"`listingDate` 是否非空"：已公告上市日但日期在未来的新股（实测 `920162.BJ` 莫森泰克
 `listingDate=2026-10-15`，而 `today=2026-10-13`）此刻**还没有首日行情**，必须算 `subscribed`，
@@ -266,8 +287,9 @@ var funds  = [0,3,6,9,12,15].map(k => f0 + 100*k); // 取门槛表的第 1/4/7/1
 
 ## 五·补二 基本面数据 `fund`（可比公司估值 / 公司基本面 / 财务趋势）
 
-数据源全部是 iFinD，**只对未上市新股取**（`status !== 'listed'`）；已上市记录的 `fund` 恒为 `null`，
-页面在工作台 Tab 的「发行方案详情」只对未上市标的渲染这几张卡。
+数据源全部是 iFinD，**只对「未上市」+「当天上市」两类标的取**
+（`status !== 'listed' || listingToday === true`）；其余已上市记录的 `fund` 恒为 `null`，
+页面在工作台 Tab 的申购清单展开体里对这两类标的渲染这几张卡。
 
 ### 取数：`data/raw/<code>.fund.json`（由 `tools/fetch.cjs` 的 fund 通道写）
 
@@ -348,7 +370,7 @@ var funds  = [0,3,6,9,12,15].map(k => f0 + 100*k); // 取门槛表的第 1/4/7/1
 ⚠ `noticeText` / `compCandidates` **不进成品**（成品只保留 `notice:{title,date}`）。
 
 **规则（`build/build-seed.cjs` 负责，`build/verify.cjs` 逐条复算）**
-- 只有 `status !== 'listed'` 的记录才有 `fund`；其余为 `null`。
+- 只有 `status !== 'listed' || listingToday === true` 的记录才有 `fund`；其余为 `null`。
 - `peDiscountPct = round((peRatio / industryPe - 1) * 100, 2)`；`peRatio` 或 `industryPe` 缺任一 → `null`。
 - `compsMeanPe` = `comps` 中 `pe` 非 null 者的**算术平均**（2 位）；同理 `compsMeanPb`。样本为 0 → `null`。
 - `comps` 里 `code` 解析不到的公司**保留在数组里**（`code:null`、估值全 `null`），让页面能显示「招股书披露但未上市/未匹配」。
