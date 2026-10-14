@@ -100,7 +100,7 @@ node build\verify.cjs
 
 | Tab | 内容 |
 | --- | --- |
-| 🧰 打新工作台 | 今日/近期可申购、待上市，含顶格资金、中签门槛、状态；下方五张详情卡（见下） |
+| 🧰 打新工作台 | **申购清单**：待上市新股（即将申购 / 已申购待上市）逐只一行，点标题展开该只的完整分析（发行方案 + 该不该打 + 五张测算卡，见下）。清单下方是「最近已上市新股 · 首日表现速览」 |
 | 📊 打新数据 | 全量打新记录表，点表头排序，可按代码/名称搜索 |
 | 💰 资金档位分布 | 按顶格资金分档，标出近期重点与参考性弱的早期数据 |
 | 🚀 上市首日表现 | 首日开/高/低/收/均价、涨跌幅、换手率、临停、T+1、成交额 |
@@ -109,7 +109,20 @@ node build\verify.cjs
 - 表格点表头排序；窄屏（<560px）卡片单列、表格内横向滚动。
 - 图表是手写 SVG/CSS，**不引任何图表库**。
 
-### 打新工作台的五张详情卡
+### 申购清单即容器
+
+工作台顶部只有一份清单，**清单本身就是容器**：每只待上市新股一行（序号 / 简称 / 代码 / 状态 pill / 摘要行「发行价 · PE · 申购 · 上市 · 顶格」/ 右侧倒计时），点标题行展开，展开体里依次是
+
+1. 发行方案摘要（8 个 `.elem`：发行价 / 首发市盈率 / 网上申购上限 / 顶格资金 / 申购日期 / 上市日期 / 中签率 / 行业）；
+2. `<details class="fold">`**该不该打 · 要准备多少钱**（**默认收起**，需要时点开）；
+3. 五张测算卡（下表）。
+
+- **同一时刻只展开一只**（`IPOC_OPEN` 单值）——展开体里沿用固定 id（`dtThr` / `dtEl` / `dtFund` / `dtPe0`…），多开会串台。
+- 默认展开 `pickedForHero()` 挑中的那只（即将申购/最近申购的），其余收起；收起态的 `.ipoc-body` 是空字符串，不预渲染。
+- 清单按 `subscribeDate` 降序；已上市的**不进清单**，只在下方速览与「打新数据」Tab。
+- 旧的三个独立窗口 `#wHero` / `#wDetail` / `#wPlan` 已从 DOM 移除（`verify.cjs` 会断言其不存在）。
+
+### 五张测算卡（在展开体里）
 
 只有 `status !== 'listed'`（即还没上市）的标的才渲染这五张卡；已上市的不再给申购测算。
 
@@ -236,16 +249,22 @@ bse-ipo/
       var occWanDays = tp * EL_HOLD_DAYS + bWan * EL_SETTLE_DAYS;   // bWan = price*b/1e4
       ann.push(t.map(function(v){ return v * 365 * tp / occWanDays; }));
       ```
-      `build/verify.cjs` 会检查这两个常量仍是 `7` / `2`、`elasticRows()` 里出现 `bWan = price * b / 1e4` 与 `occWanDays = tp * EL_HOLD_DAYS + bWan * EL_SETTLE_DAYS` 与 `v * 365 * tp / occWanDays`、并且页面**不再**出现「踩门槛中 1 手」那张表。
+      `build/verify.cjs` 会检查这两个常量仍是 `2` / `7`、`elasticRows()` 里出现 `bWan = price * b / 1e4` 与 `occWanDays = tp * EL_HOLD_DAYS + bWan * EL_SETTLE_DAYS` 与 `v * 365 * tp / occWanDays`、并且页面**不再**出现「踩门槛中 1 手」那张表。
     - `build/verify-real.cjs` 会逐格复算（`el[0]` 是收益率表首行、`el[6]` 是年化表首行），并断言年化**不等于**简单按 9 天折算的结果。
+12. **页面脚本整体包在一个 IIFE 里 → 禁止用内联事件处理器调用内部函数。**
+    - 页面末尾是 `(function(){ … })();`，所以 `onclick="ipocToggle('…')"` / `oninput="dtSet(…)"` 里的函数**在全局作用域不存在**，点击/输入时只会抛 `Uncaught ReferenceError: ipocToggle is not defined`，而**初始渲染完全正常**（所以肉眼和「读 DOM 初值」的断言都发现不了）。这个坑实际踩过两次：申购清单点标题不展开、门槛测算的输入框改了不重画。
+    - 正确做法是**事件委托**：`ipocRender()` 在 `#wList` 上挂一个 `onclick`（用 `ipocHdOf()` 从 `ev.target` 往上找 `.ipoc-hd`），`ipocOpen()` 在展开体上调 `bindDtInput()` 挂 `input` 监听。
+    - 输入框的键名**不能直接用中文标签**：`dtInput(id, 标签, …)` 的第二个参数是给人看的，`dtSet()` 要的是 `DT` 的键。用 `DT_KEY = { dtFund:'fund', dtOnline:'online', dtTop:'top', dtPe0:'pe0', dtStep:'peStep', dtEps:'eps', dtPrice:'price' }` 由 id 反查。
+    - `build/verify.cjs` 会扫 `on(click|input|change)="(ipocToggle|dtSet|ipocOpen|dtPaintThr|dtPaintEl)"` 并判失败；`build/verify-real.cjs` 会真的派发一次 `input` 事件，断言表格首格从 `11,500` 变成 `12,000`（也就是「改输入框确实重画」）。
+13. **`build-seed.cjs` 的 `generatedAt` 用 `--now=<ISO>` 固定**：默认取当前时刻，同一份输入两次运行必然差几毫秒，`test-build-seed.cjs` 的「重跑字节一致」幂等断言会随机失败。回归测试固定传 `--now=2026-10-13T00:00:00+00:00`。
 
 ### 交付前验收（照抄即可）
 
 ```bat
 set N=C:\Users\p\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\node\bin\node.exe
 %N% build\test-build-seed.cjs        :: 离线回归：派生公式 / status 三分法（不联网）
-%N% build\verify.cjs                 :: 契约闸门：58 项，含内联 seed 与 ipo.json 顶层键逐项一致
-%N% build\verify-real.cjs            :: 真实 93 条渲染：4 Tab 数值齐备 + 工作台五张详情卡（无头 Chrome）
+%N% build\verify.cjs                 :: 契约闸门：60 项，含内联 seed 与 ipo.json 顶层键逐项一致
+%N% build\verify-real.cjs            :: 真实 93 条渲染：4 Tab 数值齐备 + 申购清单展开体五张卡（无头 Chrome）
 %N% build\verify-real.cjs --shot     :: 同上，并出 docs/shots/real-*.png
 %N% build\verify-boot.cjs            :: 外部数据加载/降级四条路径
 %N% build\verify-serve.cjs           :: 静态服务真站点断言（mode=real）
