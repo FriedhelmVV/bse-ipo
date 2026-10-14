@@ -100,7 +100,7 @@ node build\verify.cjs
 
 | Tab | 内容 |
 | --- | --- |
-| 🧰 打新工作台 | **申购清单**：待上市新股（即将申购 / 已申购待上市）逐只一行，点标题展开该只的完整分析（发行方案 + 五张测算卡，见下）。清单下方是「最近已上市新股 · 首日表现速览」 |
+| 🧰 打新工作台 | **申购清单**：待上市与**当天上市**新股（即将申购 / 已申购待上市 / 今日上市）逐只一行，点标题展开该只的完整分析（发行方案 + 五张测算卡，见下）。清单下方是「最近已上市新股 · 首日表现速览」 |
 | 📊 打新数据 | 全量打新记录表，点表头排序，可按代码/名称搜索 |
 | 💰 资金档位分布 | 按顶格资金分档，标出近期重点与参考性弱的早期数据 |
 | 🚀 上市首日表现 | 首日开/高/低/收/均价、涨跌幅、换手率、临停、T+1、成交额 |
@@ -118,9 +118,21 @@ node build\verify.cjs
 
 - **同一时刻只展开一只**（`IPOC_OPEN` 单值）——展开体里沿用固定 id（`dtThr` / `dtEl` / `dtFund` / `dtPe0`…），多开会串台。
 - 默认展开 `pickedForHero()` 挑中的那只（即将申购/最近申购的），其余收起；收起态的 `.ipoc-body` 是空字符串，不预渲染。
-- 清单按 `subscribeDate` 降序；已上市的**不进清单**，只在下方速览与「打新数据」Tab。
+- 清单按 `subscribeDate` 降序；**当天上市**的照旧留在清单里（见下），**上市第二天起不进清单**，只在下方速览与「打新数据」Tab。
 - 旧的三个独立窗口 `#wHero` / `#wDetail` / `#wPlan` 已从 DOM 移除（`verify.cjs` 会断言其不存在）。
 - ⛔ **`m03109` 起「该不该打 · 要准备多少钱」块已整体删除**（含 `planListHTML()`、`.fold` / `.list` / `.li` 样式、`details.fold` 探针字段）。它想说的信息并没有丢：顶格资金与顶格中签股数在展开体的发行方案摘要和门槛测算里，碎股门槛在「打新数据」Tab 的列里。三道闸门都加了「不许再出现 `planListHTML` / `details class="fold"` / 文案『该不该打』」的反向断言（`verify.cjs` / `verify-real.cjs` / `verify-live.cjs`）。
+
+#### 当天上市的新股也留在清单里（`listingToday`）
+
+用户要求：**上市当天的标的要和「已申购未上市」一样给完整数据**，不能只有一行壳子。
+
+- `status` **不新增枚举值**：当天上市仍是 `listed`，另给一个布尔字段 `listingToday`（等价于 `status==='listed' && listingDate === today`）。`counts`、「打新数据」Tab、「上市首日表现」Tab 全部照旧把它当已上市，零改动。
+- 页面侧：`isListingToday(r)` / `inWorkbench(r)`；`ipocList()` 用 `inWorkbench()` 收录；`ipocBodyHTML()` 与 `detailCardsHTML()` 的守卫是 `statusOf(r)==='listed' && !isListingToday(r)`（**写成裸 `statusOf(r)==='listed'` 就会把当天那只一起短路掉** —— 这正是本次修的 bug）；状态 pill 文案改走 `statusTxtOf(r)`，当天显示金色「今日上市」。
+- 数据侧两处必须同步，缺一处当天就是空卡：
+  - `build/build-seed.cjs` 的 `buildFund(fr, status, peRatio, listingToday)`：`status === 'listed' && !listingToday` 才返回 `null`；
+  - `tools/fetch.cjs` 的 fund 目标过滤：`!it.listingDate || it.listingDate >= todayDash`（**`>=`**，`>` 会让当天上市的取不到基本面）。
+- 次日起 `listingDate < today` → `listingToday=false` → 自动退出清单，不需要任何清理逻辑。
+- ⚠ 页面一律读种子里的 `r.listingToday`，**不要用浏览器当天时间重算**：页面在每天 07:00 种子重建之前打开时，浏览器日期会比种子生成日多一天，两边会打架（`status` 用的是种子生成日）。
 
 ### 五张测算卡（在展开体里）
 
