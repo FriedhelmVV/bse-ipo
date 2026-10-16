@@ -4,7 +4,7 @@
 
 - 成品：`北交所打新工作台.html` —— 双击 `file://` 就能用，不联网、不装任何东西、不引任何 CDN。
 - 数据：**全部由同花顺 iFinD 自动取数生成**，不含任何手工抄录或演示数据；取不到的字段一律显示 `—`。
-- 更新：`tools/daily-update.cjs` **每晚 22:00 起每小时**由 Windows 计划任务跑一遍（取数 → 构建 → 内联 → 断言 → 发布）；本「市场日」成功过就跳过，失败/被系统掐掉的下一小时自动补（见 §五「自动更新」）。
+- 更新：`tools/daily-update.cjs` **每天 00:00 起每小时**由 Windows 计划任务跑一遍（取数 → 构建 → 内联 → 断言 → 发布）；本「市场日」成功过就跳过，失败/被系统掐掉的下一小时自动补（见 §五「自动更新」）。
 - 固定网址：**<https://friedhelmvv.github.io/bse-ipo/>** —— 由 `tools/publish-pages.cjs` 发布到 GitHub Pages（仓库 `FriedhelmVV/bse-ipo`，配置见 `tools/pages.json`）。
 
 > 数据来源：同花顺 iFinD。仅供研究参考，**不构成任何投资建议**。
@@ -55,8 +55,8 @@ node tools\publish-pages.cjs --stage DIR:: 把站点落到 DIR 本地预览
 
 ```bat
 node tools\schedule.cjs                        :: 查看状态（默认，只读）
-node tools\schedule.cjs --install              :: 注册：22:00 起每小时跑 daily-update.cjs --catch-up --quiet
-node tools\schedule.cjs --install --time 22:30 :: 换一个起始时间（改完记得同步 daily-update.cjs 的 DAY_START_HOUR）
+node tools\schedule.cjs --install              :: 注册：00:00 起每小时跑 daily-update.cjs --catch-up --quiet
+node tools\schedule.cjs --install --time 07:00 :: 换一个起始时间（改完记得同步 daily-update.cjs 的 DAY_START_HOUR）
 node tools\schedule.cjs --run                  :: 立刻手工触发一次（等价于点「运行」）
 node tools\schedule.cjs --uninstall            :: 卸载
 node tools\schedule.cjs --dry-run              :: 只打印将注册的任务，绝不写系统
@@ -64,23 +64,24 @@ node tools\schedule.cjs --dry-run              :: 只打印将注册的任务，
 
 任务名 `BseIpoDailyUpdate`，`MultipleInstancesPolicy=IgnoreNew`、`ExecutionTimeLimit=PT45M`、`LogonType=InteractiveToken + LeastPrivilege`（**不需要管理员、不存密码**）、`StartWhenAvailable=true`（到点时没开机就开机后补跑）。
 
-**触发器是「每晚 22:00 起，每 1 小时一次，持续 16 小时（`<Repetition><Interval>PT1H</Interval><Duration>PT16H</Duration>`，即 22:00–次日 14:00 共 17 次机会）**，不是一天赌一次。代价几乎为零，因为 `daily-update.cjs --catch-up` 是幂等的。
+**触发器是「每天 00:00 起，每 1 小时一次，持续 16 小时（`<Repetition><Interval>PT1H</Interval><Duration>PT16H</Duration>`，即 00:00–16:00 共 17 次机会）**，不是一天赌一次。代价几乎为零，因为 `daily-update.cjs --catch-up` 是幂等的。
 
-补跑闸门 `--catch-up` 的判据是**「市场日」**：本地 **22:00 之前算前一天** —— 也就是「一次更新周期 = 当天 22:00 到次日 21:59」，同一市场日已经成功跑过就 `SKIP`，跨市场日一定跑。于是：
+补跑闸门 `--catch-up` 的判据是**「市场日」**：本地 **00:00 之前算前一天** —— 也就是「一次更新周期 = 当天 00:00 到当天 23:59」，同一市场日已经成功跑过就 `SKIP`，跨市场日一定跑。于是：
 
-- 22:00 那次失败/被掐掉 → 23:00、次日 00:00… 每个整点自动重来，一直到次日 14:00；
-- 22:00 成功之后，次日白天的所有触点全部 `SKIP`，直到下一个 22:00 才开新一轮；
-- 起点小时**必须等于** `daily-update.cjs` 的 `DAY_START_HOUR`（现在都是 22），否则「本市场日跑过没有」会和触发器错位 —— `build/verify.cjs [11]` 会核对两者相等。
+- 00:00 那次失败/被掐掉 → 01:00、02:00… 每个整点自动重来，一直到 16:00；
+- 00:00 成功之后，当天剩下的所有触点全部 `SKIP`，直到第二天 00:00 才开新一轮；
+- 起点小时**必须等于** `daily-update.cjs` 的 `DAY_START_HOUR`（现在都是 0），否则「本市场日跑过没有」会和触发器错位 —— `build/verify.cjs [11]` 会核对两者相等。
+- 起点取 0 时市场日的分界正好落在午夜，所以「市场日」就是 +08:00 的自然日，最容易理解；若改成别的整点（例如 `--time 07:00`），记得把 `daily-update.cjs` 与 `tools/fetch.cjs` 里的 `DAY_START_HOUR` 一起改，`verify.cjs [11]/[12]` 会三向比对。
 
 排查「数据怎么没更新」用只读诊断（一步都不执行）：
 
 ```bat
 node tools\daily-update.cjs --explain-catch-up
 node tools\daily-update.cjs --explain-catch-up --at=2026-10-17T03:00:00+08:00
-:: → { nowLocal, marketDay, lastSuccessAt, lastSuccessDay, decision: "RUN…/SKIP…" }
+:: → { nowLocal, marketDay, lastSuccessAt, lastSuccessDay, lastSuccessFetched, decision: "RUN…/SKIP…" }
 ```
 
-（早期版本是「一天一次 07:00」+「自然日」判据，2026-10-16 被现实打穿：电脑 04:30 睡到 09:12，07:00 那次根本没触发；09:18 的补跑在第 10 秒被硬杀（`exit=0xC000013A`），`RestartOnFailure` 没兜住，站点 13 小时没更新。更早还用过「距上次成功满 20 小时」，会把「前一天晚上手工跑过一次」之后的第二天早上那次吞掉。两次都已改。）
+（早期版本是「一天一次 07:00」+「自然日」判据，2026-10-16 被现实打穿：电脑 04:30 睡到 09:12，07:00 那次根本没触发；09:18 的补跑在第 10 秒被硬杀（`exit=0xC000013A`），`RestartOnFailure` 没兜住，站点 13 小时没更新。中间还用过「每晚 22:00」（2026-10-16 ~ 10-17），后按使用者要求改成 00:00。更早还用过「距上次成功满 20 小时」，会把「前一天手工跑过一次」之后的第二天那次吞掉。都已改。）
 
 ---
 
@@ -153,7 +154,7 @@ node build\verify.cjs
   - `build/build-seed.cjs` 的 `buildFund(fr, status, peRatio, listingToday)`：`status === 'listed' && !listingToday` 才返回 `null`；
   - `tools/fetch.cjs` 的 fund 目标过滤：`!it.listingDate || it.listingDate >= todayDash`（**`>=`**，`>` 会让当天上市的取不到基本面）。
 - 次日起 `listingDate < today` → `listingToday=false` → 自动退出清单，不需要任何清理逻辑。
-- ⚠ 页面一律读种子里的 `r.listingToday`，**不要用浏览器当天时间重算**：页面在每天 22:00 种子重建之前打开时，浏览器日期会比种子生成日多一天，两边会打架（`status` 用的是种子生成日）。
+- ⚠ 页面一律读种子里的 `r.listingToday`，**不要用浏览器当天时间重算**：页面在每天 00:00 种子重建之前打开时，浏览器日期会比种子生成日多一天，两边会打架（`status` 用的是种子生成日）。
 
 ### 五张测算卡（在展开体里）
 
@@ -292,7 +293,7 @@ bse-ipo/
     - 输入框的键名**不能直接用中文标签**：`dtInput(id, 标签, …)` 的第二个参数是给人看的，`dtSet()` 要的是 `DT` 的键。用 `DT_KEY = { dtFund:'fund', dtOnline:'online', dtTop:'top', dtPe0:'pe0', dtStep:'peStep', dtEps:'eps', dtPrice:'price' }` 由 id 反查。
     - `build/verify.cjs` 会扫 `on(click|input|change)="(ipocToggle|dtSet|ipocOpen|dtPaintThr|dtPaintEl)"` 并判失败；`build/verify-real.cjs` 会真的派发一次 `input` 事件，断言表格首格从 `11,500` 变成 `12,000`（也就是「改输入框确实重画」）。
 13. **`build-seed.cjs` 的 `generatedAt` 用 `--now=<ISO>` 固定**：默认取当前时刻，同一份输入两次运行必然差几毫秒，`test-build-seed.cjs` 的「重跑字节一致」幂等断言会随机失败。回归测试固定传 `--now=2026-10-13T00:00:00+00:00`。
-14. **「一天一次」的计划任务不可靠 —— 电脑会睡觉。** 2026-10-16 实测：本机 04:30 进入睡眠，当天的触发**根本没发生**；09:12 唤醒后 `StartWhenAvailable=true` 在 09:18 补跑，`fetch` 跑到第 10 秒被系统**硬杀**（任务「上次结果」= `-1073741510` = `0xC000013A` = `STATUS_CONTROL_C_EXIT`，日志停在 `[fetch] iFinD 取数（增量） → …` 没有任何收尾行，`raw/` 只写了 2 个文件），`RestartOnFailure`（3 次 / 5 分钟）**没有兜住**。结果：站点 13 小时旧数据，直到用户来问。教训：`InteractiveToken` 的计划任务在睡眠中不执行，任何「一天只有一个机会」的编排都会被打穿。对策 = 触发器加 `<Repetition><Interval>PT1H</Interval><Duration>PT16H</Duration>`（22:00–次日 14:00 每小时一次，共 17 次机会）+ 幂等的 `--catch-up`；判据同时从「自然日」改成「市场日」（本地 22:00 前算前一天，`DAY_START_HOUR = 22`），否则凌晨被唤醒的补跑会把当晚那次吃掉。**开跑小时必须与 `DAY_START_HOUR` 相等**，`build/verify.cjs` 第 `[11]` 段把这条钉死（读两个常量比对 + 静态扫 XML 片段 + 用只读的 `--explain-catch-up` 验证 22:00 边界）。
+14. **「一天一次」的计划任务不可靠 —— 电脑会睡觉。** 2026-10-16 实测：本机 04:30 进入睡眠，当天的触发**根本没发生**；09:12 唤醒后 `StartWhenAvailable=true` 在 09:18 补跑，`fetch` 跑到第 10 秒被系统**硬杀**（任务「上次结果」= `-1073741510` = `0xC000013A` = `STATUS_CONTROL_C_EXIT`，日志停在 `[fetch] iFinD 取数（增量） → …` 没有任何收尾行，`raw/` 只写了 2 个文件），`RestartOnFailure`（3 次 / 5 分钟）**没有兜住**。结果：站点 13 小时旧数据，直到用户来问。教训：`InteractiveToken` 的计划任务在睡眠中不执行，任何「一天只有一个机会」的编排都会被打穿。对策 = 触发器加 `<Repetition><Interval>PT1H</Interval><Duration>PT16H</Duration>`（起始小时起每小时一次，共 17 次机会）+ 幂等的 `--catch-up`；判据同时从「自然日」改成「市场日」（本地 `DAY_START_HOUR` 前算前一天），否则凌晨被唤醒的补跑会把当天那次吃掉。**开跑小时必须与 `DAY_START_HOUR` 相等**，`build/verify.cjs` 第 `[11]` 段把这条钉死（读两个常量比对 + 静态扫 XML 片段 + 用只读的 `--explain-catch-up` 验证市场日分界，且分界小时是从源码读出来的、不写死）。当前开跑时刻 = **每天 00:00**（`DEFAULT_TIME = '00:00'` / `DAY_START_HOUR = 0`，共 17 个机会到当天 16:00）。
 15. **所有「一排新股一行」的数据表格，一律按「申购日期」从新到旧（降序）。** 涉及四处，改的时候别只改一半：① 打新数据表 `S2 = { k:'subscribeDate', dir:-1, … }`（`#resetQ` 重置也要写 `-1`）；② 资金档位分布表 `fundRender()` 里 `fundRows().reverse()`；③ 上市首日表现表 `fdRender()` 里把行按 `subscribeDate` 倒序重排；④ 工作台「首日表现速览」`quickHTML()` 自己按 `subscribeDate` 倒序取前 8。申购清单 `ipocList()` 本来就是这个口径。
     ⚠ **只许在渲染函数里重排副本，不许改 `fundRows()` / `fdRows()` 的返回顺序** —— 它们的升序原序是给 `chartFundTrend()` / `chartSubsTrend()` / 首日散点与柱图当时间轴用的，改了图表就倒着画。`build/verify-real.cjs` 有 4 条断言钉住（两条 `isDesc()` 扫 `#tblData` / `#tblFund` 的日期列，两条拿种子算出的期望序列逐位比对 `#tblFd` 的代码序与速览简称序）。
 16. **窄屏闸门要用 iframe 量，不能用 `--window-size`。** Windows 上 Chrome 的 `--window-size` 有最小宽度（实测被夹到 ~500px）：`--window-size=390,2400` 会按 500px 布局却只截 390px 宽画布，看起来「被截断」其实是假象。`build/verify-real.cjs` 的 `narrowProbe(width)` 改成把页面塞进 390px 宽的 iframe（父页 1200 宽，需 `--allow-file-access-from-files` 才能读 `contentDocument`）再量 `scrollWidth`。
@@ -300,7 +301,7 @@ bse-ipo/
     - 为什么必须有第 ③ 条（2026-10-16 天元重工事故）：交易所当天公告的 `920306.BJ` 天元重工（现金申购发行日期 2026-10-20），在 iFinD 的**选股索引**里**完全查不到** —— `"北交所股票，股票代码大于920300"` 只回 `920300.BJ` 辰光医疗，连最宽的 `"北交所股票，上市日期为空"` 也只有 2 只；`search_stocks` 用简称、全称、代码问全是「抱歉，未找到符合要求的证券」。但**按代码单查 `get_stock_info` / `get_stock_events` 字段齐全**（发行价 4.48、发行市盈率 14.93、网上申购上限 181.9 万股、网上发行数量仍为空）。也就是说：**索引滞后 ≠ 数据没有**，只要知道代码就能取全，所以兜底通道必须是「手工登记代码」。
     - `data/watch.json` 形状：`{ "items": [ { "code": "920306.BJ", "name": "天元重工", "subscribeDate": "2026-10-20" } ] }`。`name` / `subscribeDate` 可省；`code` 必须是 6 位数字 + `.BJ`（非法项静默跳过，坏文件当空清单，绝不因为一个手写文件炸掉整轮取数）。**不消耗任何 iFinD 调用** —— 它只是把代码塞进池子，后面 events / profile / perf / fund 与池子里来的标的完全同路。iFinD 池子收录之后这里保留也无害。
     - 加完条目后要跑一次 `node tools\fetch.cjs`（别加 `--codes`，那样会跳过池子合并）才能让它进池子；`build/verify.cjs` 第 `[12]` 段会断言「关注清单里的每一只都已并进 `universe.json`」。
-18. **所有「当日缓存」的失效键是「市场日」，不是自然日。** `tools/fetch.cjs` 里的 `marketYmd()`（与 `tools/daily-update.cjs` 的 `marketDay()` 同一套算法）用在两处：股票池第二路的 `cachedUnlistedOn !== marketYmd()`、基本面 `fundFetchedOn === marketYmd()`。写成 `todayYmd()` 的后果是：22:00 开跑的新周期会**复用 20:xx 那份属于上一个周期的池子**，等于整轮没重问 —— 这正是 2026-10-16 天元重工没被发现的第二个成因（`unlistedFetchedOn` 仍是 `20261016`，而那天 20:47 已经写过一次）。
+18. **所有「当日缓存」的失效键是「市场日」，不是自然日。** `tools/fetch.cjs` 里的 `marketYmd()`（与 `tools/daily-update.cjs` 的 `marketDay()` 同一套算法）用在两处：股票池第二路的 `cachedUnlistedOn !== marketYmd()`、基本面 `fundFetchedOn === marketYmd()`。写成 `todayYmd()` 的后果是：新周期开跑那天会**复用前一天那份属于上一个周期的池子**，等于整轮没重问 —— 这正是 2026-10-16 天元重工没被发现的第二个成因（`unlistedFetchedOn` 仍是 `20261016`，而那天 20:47 已经写过一次）。
     - **三处开跑小时必须相等**：`tools/schedule.cjs` 的 `DEFAULT_TIME`（触发器）、`tools/daily-update.cjs` 的 `DAY_START_HOUR`（catch-up 判据）、`tools/fetch.cjs` 的 `DAY_START_HOUR`（缓存周期）。改一处必须改三处，`build/verify.cjs` 第 `[12]` 段会三向比对。
 
 ### 交付前验收（照抄即可）
@@ -308,7 +309,7 @@ bse-ipo/
 ```bat
 set N=C:\Users\p\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\node\bin\node.exe
 %N% build\test-build-seed.cjs        :: 离线回归：派生公式 / status 三分法（不联网）
-%N% build\verify.cjs                 :: 契约闸门：76 项，含内联 seed 与 ipo.json 顶层键逐项一致、自动更新自愈配置、新股发现通道
+%N% build\verify.cjs                 :: 契约闸门：75 项，含内联 seed 与 ipo.json 顶层键逐项一致、自动更新自愈配置、新股发现通道
 %N% build\verify-real.cjs            :: 真实 93 条渲染：4 Tab 数值齐备 + 申购清单展开体五张卡 + 表格排序（105 项，无头 Chrome）
 %N% build\verify-real.cjs --shot     :: 同上，并出 docs/shots/real-*.png
 %N% build\verify-boot.cjs            :: 外部数据加载/降级四条路径
