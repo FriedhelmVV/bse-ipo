@@ -52,17 +52,42 @@ data/manifest.js             —— 元信息
 - `code`：`920xxx.BJ` 形式的北交所代码
 - `listingDate`：`YYYY-MM-DD`，来自「新股上市日期」；未定为 `null`
 - `subscribeDate`：`YYYY-MM-DD`，来自「申购日期」；**只有第二路问法会给**，按年问法为 `null`
-- `unlistedFetchedOn`：`YYYYMMDD`，第二路问法最后一次执行的日期（每天跑一次即可）
+- `unlistedFetchedOn`：`YYYYMMDD`，第二路问法最后一次执行的**市场日**（每个更新周期跑一次即可；键必须是市场日，不能用自然日，见 §二·补）
 
-**股票池必须两路合并**（`tools/fetch.cjs`）：
+**股票池必须三路合并**（`tools/fetch.cjs`）：
 
-| 路 | 问法 | 覆盖 |
+| 路 | 来源 | 覆盖 |
 | --- | --- | --- |
-| ① 按年已上市 | `<年>年北交所上市的新股，按上市日期排序` | 已上市新股（每年一次调用） |
-| ② 待上市 / 即将申购 | `北交所股票，上市日期为空，申购日期不为空` | 已申购未上市 + 即将申购 |
+| ① 按年已上市 | `search_stocks`：`<年>年北交所上市的新股，按上市日期排序` | 已上市新股（每年一次调用） |
+| ② 待上市 / 即将申购 | `search_stocks`：`北交所股票，上市日期为空，申购日期不为空` | 已申购未上市 + 即将申购 |
+| ③ 手工关注清单 | `data/watch.json`（不消耗 iFinD 调用） | 已公告但 **iFinD 选股索引还没收录**的新股 |
 
 ⚠ 只用①时「即将申购 / 已申购待上市」永远是空的 —— 而那正是打新工作台的主打内容。
 实测①漏掉 `920196.BJ`/`920296.BJ`/`920285.BJ` 三只，②恰好精确返回这三只。
+
+### 二·补 `data/watch.json`（第三路，必须有）
+
+2026-10-16 实测：交易所当天公告的 `920306.BJ` 天元重工（现金申购发行日期 2026-10-20、
+发行价 4.48、发行市盈率 14.93、网上申购上限 181.9 万股）在 iFinD **选股索引**里完全查不到 ——
+`北交所股票，股票代码大于920300` 只回 `920300.BJ` 辰光医疗，最宽的 `北交所股票，上市日期为空`
+也只有 2 只；`search_stocks` 用简称、全称、代码问一律「抱歉，未找到符合要求的证券」。
+但**按代码单查 `get_stock_info` / `get_stock_events` 字段齐全**。
+
+结论：**索引滞后 ≠ 数据没有**，知道代码就能取全 → 兜底通道只能是「人工登记代码」。
+
+```jsonc
+{
+  "items": [
+    { "code": "920306.BJ", "name": "天元重工", "subscribeDate": "2026-10-20" }
+  ]
+}
+```
+- `code` 必填，`^\d{6}\.BJ$`；非法项静默跳过，文件缺失/损坏当空清单（**不能因为一个手写文件把整轮取数炸掉**）
+- `name` / `subscribeDate` 可省；`subscribeDate` 在池子里还没有它时用来填申购日期
+- 合并优先级：池子里的 `listingDate` / `subscribeDate` 更权威，关注清单只做「补进来」
+- 年份未知 → `codeYears` 记 `null`，任何 `--years` 过滤都保留它（否则未上市新股会被年份挡掉）
+- 加完条目要跑一次 `node tools\fetch.cjs`（**别加 `--codes`**，那会跳过池子合并）
+- `build/verify.cjs` 第 `[12]` 段断言「关注清单里的每一只都已并进 `universe.json`」
 
 ## 三、`data/raw/<code>.json`
 
@@ -391,8 +416,9 @@ var funds  = [0,3,6,9,12,15].map(k => f0 + 100*k); // 取门槛表的第 1/4/7/1
 
 | 文件 | 说明 |
 |---|---|
-| `data/raw/universe.json` | 股票池缓存 |
+| `data/raw/universe.json` | 股票池缓存（三路合并的结果） |
 | `data/raw/<code>.json` | 逐股原始缓存 |
+| `data/watch.json` | **输入**（不是产物）：手工关注清单，第三路股票池，见 §二·补 |
 | `data/ipo.json` | 成品（格式化，便于 diff） |
 | `data/ipo.js` | `window.BSE_IPO = {...}`，与 ipo.json 内容一致 |
 | `data/manifest.js` | `window.BSE_MANIFEST = {generatedAt,schemaVersion,counts,hash}` |
