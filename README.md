@@ -101,12 +101,14 @@ build/verify.cjs         契约断言（含基准股逐字段比对）；不过�
 ```bat
 node tools\fetch.cjs                          :: 增量：只补缺的
 node tools\fetch.cjs --full                   :: 忽略缓存全量重取
-node tools\fetch.cjs --codes=920086.BJ        :: 只取指定代码
+node tools\fetch.cjs --codes=920086.BJ        :: 只取指定代码（⚠ 此模式不合并股票池）
 node tools\fetch.cjs --limit=5 --interval=3000
 node build\build-seed.cjs --today=2026-10-13
 node build\inject-seed.cjs [--check]          :: --check 只校验不写
 node build\verify.cjs
 ```
+
+股票池来自三条路：按年已上市、待上市/即将申购、以及**手工关注清单 `data/watch.json`**（iFinD 选股索引滞后时登记新公告的代码）。详见 §六.17。
 
 字段口径、公式、单位、缺失语义**全部**写在 [`SCHEMA.md`](SCHEMA.md)，改字段先改它。
 
@@ -209,6 +211,7 @@ bse-ipo/
 │  └─ shots/                 无头 Chrome 验收截图与 verify*.json
 ├─ data/
 │  ├─ raw/                   取数原始缓存（universe.json + <code>.json + <code>.fund.json + _errors.json）
+│  ├─ watch.json             手工关注清单：iFinD 选股索引还没收录的新股代码（见 §六.17）
 │  ├─ ipo.json / ipo.js      成品数据
 │  └─ manifest.js            索引与 hash
 ├─ tools/
@@ -293,13 +296,19 @@ bse-ipo/
 15. **所有「一排新股一行」的数据表格，一律按「申购日期」从新到旧（降序）。** 涉及四处，改的时候别只改一半：① 打新数据表 `S2 = { k:'subscribeDate', dir:-1, … }`（`#resetQ` 重置也要写 `-1`）；② 资金档位分布表 `fundRender()` 里 `fundRows().reverse()`；③ 上市首日表现表 `fdRender()` 里把行按 `subscribeDate` 倒序重排；④ 工作台「首日表现速览」`quickHTML()` 自己按 `subscribeDate` 倒序取前 8。申购清单 `ipocList()` 本来就是这个口径。
     ⚠ **只许在渲染函数里重排副本，不许改 `fundRows()` / `fdRows()` 的返回顺序** —— 它们的升序原序是给 `chartFundTrend()` / `chartSubsTrend()` / 首日散点与柱图当时间轴用的，改了图表就倒着画。`build/verify-real.cjs` 有 4 条断言钉住（两条 `isDesc()` 扫 `#tblData` / `#tblFund` 的日期列，两条拿种子算出的期望序列逐位比对 `#tblFd` 的代码序与速览简称序）。
 16. **窄屏闸门要用 iframe 量，不能用 `--window-size`。** Windows 上 Chrome 的 `--window-size` 有最小宽度（实测被夹到 ~500px）：`--window-size=390,2400` 会按 500px 布局却只截 390px 宽画布，看起来「被截断」其实是假象。`build/verify-real.cjs` 的 `narrowProbe(width)` 改成把页面塞进 390px 宽的 iframe（父页 1200 宽，需 `--allow-file-access-from-files` 才能读 `contentDocument`）再量 `scrollWidth`。
+17. **新股发现有三条路，缺一条就会漏股。** `data/raw/universe.json` 的股票池 = ① 按年已上市（`search_stocks`）+ ② 待上市/即将申购（`UNLISTED_QUERY`）+ ③ **手工关注清单 `data/watch.json`**。
+    - 为什么必须有第 ③ 条（2026-10-16 天元重工事故）：交易所当天公告的 `920306.BJ` 天元重工（现金申购发行日期 2026-10-20），在 iFinD 的**选股索引**里**完全查不到** —— `"北交所股票，股票代码大于920300"` 只回 `920300.BJ` 辰光医疗，连最宽的 `"北交所股票，上市日期为空"` 也只有 2 只；`search_stocks` 用简称、全称、代码问全是「抱歉，未找到符合要求的证券」。但**按代码单查 `get_stock_info` / `get_stock_events` 字段齐全**（发行价 4.48、发行市盈率 14.93、网上申购上限 181.9 万股、网上发行数量仍为空）。也就是说：**索引滞后 ≠ 数据没有**，只要知道代码就能取全，所以兜底通道必须是「手工登记代码」。
+    - `data/watch.json` 形状：`{ "items": [ { "code": "920306.BJ", "name": "天元重工", "subscribeDate": "2026-10-20" } ] }`。`name` / `subscribeDate` 可省；`code` 必须是 6 位数字 + `.BJ`（非法项静默跳过，坏文件当空清单，绝不因为一个手写文件炸掉整轮取数）。**不消耗任何 iFinD 调用** —— 它只是把代码塞进池子，后面 events / profile / perf / fund 与池子里来的标的完全同路。iFinD 池子收录之后这里保留也无害。
+    - 加完条目后要跑一次 `node tools\fetch.cjs`（别加 `--codes`，那样会跳过池子合并）才能让它进池子；`build/verify.cjs` 第 `[12]` 段会断言「关注清单里的每一只都已并进 `universe.json`」。
+18. **所有「当日缓存」的失效键是「市场日」，不是自然日。** `tools/fetch.cjs` 里的 `marketYmd()`（与 `tools/daily-update.cjs` 的 `marketDay()` 同一套算法）用在两处：股票池第二路的 `cachedUnlistedOn !== marketYmd()`、基本面 `fundFetchedOn === marketYmd()`。写成 `todayYmd()` 的后果是：22:00 开跑的新周期会**复用 20:xx 那份属于上一个周期的池子**，等于整轮没重问 —— 这正是 2026-10-16 天元重工没被发现的第二个成因（`unlistedFetchedOn` 仍是 `20261016`，而那天 20:47 已经写过一次）。
+    - **三处开跑小时必须相等**：`tools/schedule.cjs` 的 `DEFAULT_TIME`（触发器）、`tools/daily-update.cjs` 的 `DAY_START_HOUR`（catch-up 判据）、`tools/fetch.cjs` 的 `DAY_START_HOUR`（缓存周期）。改一处必须改三处，`build/verify.cjs` 第 `[12]` 段会三向比对。
 
 ### 交付前验收（照抄即可）
 
 ```bat
 set N=C:\Users\p\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\node\bin\node.exe
 %N% build\test-build-seed.cjs        :: 离线回归：派生公式 / status 三分法（不联网）
-%N% build\verify.cjs                 :: 契约闸门：70 项，含内联 seed 与 ipo.json 顶层键逐项一致、自动更新自愈配置
+%N% build\verify.cjs                 :: 契约闸门：76 项，含内联 seed 与 ipo.json 顶层键逐项一致、自动更新自愈配置、新股发现通道
 %N% build\verify-real.cjs            :: 真实 93 条渲染：4 Tab 数值齐备 + 申购清单展开体五张卡 + 表格排序（105 项，无头 Chrome）
 %N% build\verify-real.cjs --shot     :: 同上，并出 docs/shots/real-*.png
 %N% build\verify-boot.cjs            :: 外部数据加载/降级四条路径
