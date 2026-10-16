@@ -4,7 +4,7 @@
 
 - 成品：`北交所打新工作台.html` —— 双击 `file://` 就能用，不联网、不装任何东西、不引任何 CDN。
 - 数据：**全部由同花顺 iFinD 自动取数生成**，不含任何手工抄录或演示数据；取不到的字段一律显示 `—`。
-- 更新：`tools/daily-update.cjs` **每天早上 07:00** 由 Windows 计划任务跑一遍（取数 → 构建 → 内联 → 断言 → 发布）。
+- 更新：`tools/daily-update.cjs` **每天 07:00 起每小时**由 Windows 计划任务跑一遍（取数 → 构建 → 内联 → 断言 → 发布）；当天成功过就跳过，失败/被系统掐掉的下一小时自动补（见 §五「自动更新」）。
 - 固定网址：**<https://friedhelmvv.github.io/bse-ipo/>** —— 由 `tools/publish-pages.cjs` 发布到 GitHub Pages（仓库 `FriedhelmVV/bse-ipo`，配置见 `tools/pages.json`）。
 
 > 数据来源：同花顺 iFinD。仅供研究参考，**不构成任何投资建议**。
@@ -55,14 +55,32 @@ node tools\publish-pages.cjs --stage DIR:: 把站点落到 DIR 本地预览
 
 ```bat
 node tools\schedule.cjs                        :: 查看状态（默认，只读）
-node tools\schedule.cjs --install              :: 注册：每天 07:00 跑 daily-update.cjs --catch-up --quiet
-node tools\schedule.cjs --install --time 07:30 :: 换一个时间
+node tools\schedule.cjs --install              :: 注册：07:00 起每小时跑 daily-update.cjs --catch-up --quiet
+node tools\schedule.cjs --install --time 07:30 :: 换一个起始时间
 node tools\schedule.cjs --run                  :: 立刻手工触发一次（等价于点「运行」）
 node tools\schedule.cjs --uninstall            :: 卸载
 node tools\schedule.cjs --dry-run              :: 只打印将注册的任务，绝不写系统
 ```
 
-任务名 `BseIpoDailyUpdate`，`StartWhenAvailable=true`（07:00 没开机就开机后补跑）、`MultipleInstancesPolicy=IgnoreNew`、`ExecutionTimeLimit=PT45M`、`LogonType=InteractiveToken + LeastPrivilege`（**不需要管理员、不存密码**）。补跑由 `daily-update.cjs --catch-up` 的闸门兜住：**当天（Asia/Shanghai 自然日）已经成功跑过就跳过，跨天一定跑** —— 所以 07:00 没开机、09:00 才开机，会立刻补一次；一天不会跑两遍。（早期版本用「距上次成功满 20 小时」，会把「前一天晚上手工跑过一次」之后的第二天早上那次也吞掉，已改。）
+任务名 `BseIpoDailyUpdate`，`MultipleInstancesPolicy=IgnoreNew`、`ExecutionTimeLimit=PT45M`、`LogonType=InteractiveToken + LeastPrivilege`（**不需要管理员、不存密码**）、`StartWhenAvailable=true`（到点时没开机就开机后补跑）。
+
+**触发器是「每天 07:00 起，每 1 小时一次，持续 16 小时（`<Repetition><Interval>PT1H</Interval><Duration>PT16H</Duration>`，即 07:00–23:00 共 17 次机会）**，不是一天赌一次。代价几乎为零，因为 `daily-update.cjs --catch-up` 是幂等的。
+
+补跑闸门 `--catch-up` 的判据是**「市场日」**：本地 **06:00 之前算前一天**，同一市场日已经成功跑过就 `SKIP`，跨市场日一定跑。于是：
+
+- 07:00 没开机、09:00 才开机 → 立刻补一次；
+- 一次运行被系统掐掉（睡眠/关机）→ 下一个整点自动重来；
+- 凌晨 2 点被唤醒补跑 → 算的是**前一天**，`SKIP`，不会把当天 07:00 那次吃掉（否则你早上看到的是凌晨那份数据，漏掉盘前公告）。
+
+排查「数据怎么没更新」用只读诊断（一步都不执行）：
+
+```bat
+node tools\daily-update.cjs --explain-catch-up
+node tools\daily-update.cjs --explain-catch-up --at=2026-10-17T03:00:00+08:00
+:: → { nowLocal, marketDay, lastSuccessAt, lastSuccessDay, decision: "RUN…/SKIP…" }
+```
+
+（早期版本是「一天一次 07:00」+「自然日」判据，2026-10-16 被现实打穿：电脑 04:30 睡到 09:12，07:00 那次根本没触发；09:18 的补跑在第 10 秒被硬杀（`exit=0xC000013A`），`RestartOnFailure` 没兜住，站点 13 小时没更新。更早还用过「距上次成功满 20 小时」，会把「前一天晚上手工跑过一次」之后的第二天早上那次吞掉。两次都已改。）
 
 ---
 
@@ -269,13 +287,14 @@ bse-ipo/
     - 输入框的键名**不能直接用中文标签**：`dtInput(id, 标签, …)` 的第二个参数是给人看的，`dtSet()` 要的是 `DT` 的键。用 `DT_KEY = { dtFund:'fund', dtOnline:'online', dtTop:'top', dtPe0:'pe0', dtStep:'peStep', dtEps:'eps', dtPrice:'price' }` 由 id 反查。
     - `build/verify.cjs` 会扫 `on(click|input|change)="(ipocToggle|dtSet|ipocOpen|dtPaintThr|dtPaintEl)"` 并判失败；`build/verify-real.cjs` 会真的派发一次 `input` 事件，断言表格首格从 `11,500` 变成 `12,000`（也就是「改输入框确实重画」）。
 13. **`build-seed.cjs` 的 `generatedAt` 用 `--now=<ISO>` 固定**：默认取当前时刻，同一份输入两次运行必然差几毫秒，`test-build-seed.cjs` 的「重跑字节一致」幂等断言会随机失败。回归测试固定传 `--now=2026-10-13T00:00:00+00:00`。
+14. **「一天一次」的计划任务不可靠 —— 电脑会睡觉。** 2026-10-16 实测：本机 04:30 进入睡眠，07:00 的触发**根本没发生**；09:12 唤醒后 `StartWhenAvailable=true` 在 09:18 补跑，`fetch` 跑到第 10 秒被系统**硬杀**（任务「上次结果」= `-1073741510` = `0xC000013A` = `STATUS_CONTROL_C_EXIT`，日志停在 `[fetch] iFinD 取数（增量） → …` 没有任何收尾行，`raw/` 只写了 2 个文件），`RestartOnFailure`（3 次 / 5 分钟）**没有兜住**。结果：站点 13 小时旧数据，直到用户来问。教训：`InteractiveToken` 的计划任务在睡眠中不执行，任何「一天只有一个机会」的编排都会被打穿。对策 = 触发器加 `<Repetition><Interval>PT1H</Interval><Duration>PT16H</Duration>`（07:00–23:00 每小时一次）+ 幂等的 `--catch-up`，把「一天一次机会」变成「一天 17 次机会」；代价只是多起几个 node 进程读一下状态。判据同时从「自然日」改成「市场日」（本地 06:00 前算前一天），否则凌晨被唤醒的补跑会把当天 07:00 那次吃掉，早上看到的是凌晨那份数据。`build/verify.cjs` 第 `[11]` 段把这两条钉死（静态扫 XML 片段 + 用只读的 `--explain-catch-up` 验证 06:00 边界）。
 
 ### 交付前验收（照抄即可）
 
 ```bat
 set N=C:\Users\p\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\node\bin\node.exe
 %N% build\test-build-seed.cjs        :: 离线回归：派生公式 / status 三分法（不联网）
-%N% build\verify.cjs                 :: 契约闸门：60 项，含内联 seed 与 ipo.json 顶层键逐项一致
+%N% build\verify.cjs                 :: 契约闸门：68 项，含内联 seed 与 ipo.json 顶层键逐项一致、自动更新自愈配置
 %N% build\verify-real.cjs            :: 真实 93 条渲染：4 Tab 数值齐备 + 申购清单展开体五张卡（无头 Chrome）
 %N% build\verify-real.cjs --shot     :: 同上，并出 docs/shots/real-*.png
 %N% build\verify-boot.cjs            :: 外部数据加载/降级四条路径
