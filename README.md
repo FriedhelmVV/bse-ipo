@@ -263,6 +263,7 @@ bse-ipo/
     - `company` 的合并优先级是 **`get_stock_info` 结构化字段 > 公告片段**（`mergeCompany(parseCompanyFromNotice(txt), parseCompanyFromInfo(ans))`）。反了就等着公告片段里的偶发垃圾覆盖好数据。
     - 取数**禁止猜股票代码**，也**不要用 `search_stocks` 做「简称 → 代码」解析**（多个名字一起问只回一条）。一律把公司**全称**丢给 `get_stock_info`。
     - 财务问法必须显式写「最近三年」，否则 iFinD 只给最新 MRQ；ROE 必须显式在 query 里要「净资产收益率」。
+    - **保荐机构（`company.sponsor`）要单独补问一次**：它时灵时不灵 —— 2026-10-16 实测同一轮里 `920296.BJ` 正常返回「国元证券股份有限公司」，而 `920285.BJ` / `920196.BJ` 的合并问法（`<code>的保荐机构、所属行业、所属概念、员工人数`）返回空。修法是 `tools/fetch.cjs` 步骤 **5b**：合并问法结束后若 `!isPresent(infoCompany.sponsor)`，再单独问 `${code}的保荐机构` 并用 `parseCompanyFromInfo` 取 `首发保荐人`（`stats.fundCalls++`）。**只在缺失时才多发一次，稳态成本 0**；仍拿不到就留 null，页面按「缺项不渲染」整行不显示，**不猜**。`build/verify-real.cjs` 的断言因此写成「有值就逐字对上、没值则必须整行不渲染」。
     - `fund` 只对未上市标的产出；`noticeText` / `compCandidates` 是审计用的中间态，**绝不进 `data/ipo.json`、更不进内联 seed**（公告正文里偶有 U+FFFD，会污染源码文本卫生闸门）。
     - 「可比公司」名单来自 `get_stock_info` 的官方字段，名单里本来就有未上市/非 A 股主体，取不到代码是正常的，页面显示「未匹配」而不是报错。
 11. **收益率弹性测算只按顶格申购口径算**，并同时给出年化收益率。
