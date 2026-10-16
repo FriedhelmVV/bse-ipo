@@ -209,7 +209,7 @@ parse 后 `{ code:1, msg:'success', data:{ answer:'<markdown 表格>', indicator
 | `北交所打新工作台.html` | `isListingToday(r)` / `inWorkbench(r)`；`ipocBodyHTML` 与 `detailCardsHTML` 的守卫是 `statusOf(r)==='listed' && !isListingToday(r)`；状态文案 `statusTxtOf(r)` 给「今日上市」 |
 
 ⚠ 判定一律读种子里的 `r.listingToday`，**不要在页面里用浏览器当天时间重算** —— 页面在种子重建
-（每天 07:00）之前打开时，浏览器日期会和种子生成日差一天，两边会打架。
+（每天 00:00）之前打开时，浏览器日期会和种子生成日差一天，两边会打架。
 
 ⚠ 不能只看"`listingDate` 是否非空"：已公告上市日但日期在未来的新股（实测 `920162.BJ` 莫森泰克
 `listingDate=2026-10-15`，而 `today=2026-10-13`）此刻**还没有首日行情**，必须算 `subscribed`，
