@@ -468,7 +468,7 @@ td .sub{display:block; font-size:10px; color:var(--dim2); font-weight:400}
     <div class="card" style="margin-top:14px">
       <h3>资金档位与门槛</h3>
       <p class="hint">
-        按申购日期升序。「距今天数」按本机日期计算，负数表示已过去。
+        按申购日期降序（从新到旧）。「距今天数」按本机日期计算，负数表示已过去。
         「中签100股门槛」= 100 × 发行价 ÷ 中签率，即理论上市值 100 股所需动用资金；
         「碎股门槛<strong class="est">(估算)</strong>」仅在顶格申购仍不足 100 股时才有意义，否则为空（—）。
       </p>
@@ -1031,7 +1031,10 @@ function ipocListHTML(list){
 }
 /* 首日表现速览（最近 8 只已上市） */
 function quickHTML(recs){
-  var quick = latestListed(recs).slice(0,8);
+  /* 速览与申购清单保持同一口径：按「申购日期」从新到旧 */
+  var quick = recs.filter(function(r){ return statusOf(r)==='listed'; })
+    .sort(function(a,b){ return ts2num(b.subscribeDate)-ts2num(a.subscribeDate); })
+    .slice(0,8);
   return quick.length ? quick.map(function(x){
     var c = pct(fd(x,'chgPct'));
     var txt = (x.firstDay && x.firstDay.suspended) ? '<span class="flat" style="font-size:15px">首日停牌</span>' :
@@ -1399,7 +1402,7 @@ function finPaint(r){
 /* ---------------------------------------------------------------
    6. 渲染：Tab2 打新数据（排序 / 搜索 / 筛选）
    --------------------------------------------------------------- */
-var S2 = { k:'subscribeDate', dir:1, q:'', st:'all' };
+var S2 = { k:'subscribeDate', dir:-1, q:'', st:'all' };
 function dataRows(){
   var recs = DATA ? DATA.records.slice() : [];
   if(S2.st!=='all') recs = recs.filter(function(r){ return statusOf(r)===S2.st; });
@@ -1511,7 +1514,8 @@ function fundNote(r){
   return out.length?out.join(' · '):'<span class="dim">—</span>';
 }
 function fundRender(){
-  var recs = fundRows();
+  /* 表格按「申购日期」从新到旧；图表仍要用 fundRows() 的升序原序，所以只在这里反转副本。 */
+  var recs = fundRows().reverse();
   var all = DATA ? DATA.records : [];
   var tb = $('#tbFund');
   if(!all.length){
@@ -1554,7 +1558,8 @@ function fdRows(){
     .sort(function(a,b){ return ts2num(fd(a,'date')) - ts2num(fd(b,'date')); });
 }
 function fdRender(){
-  var recs = fdRows();
+  /* 表格按「申购日期」从新到旧；图表（fdRows）仍按首日日期升序画时间轴，所以只在这里重排副本。 */
+  var recs = fdRows().sort(function(a,b){ return ts2num(b.subscribeDate)-ts2num(a.subscribeDate); });
   var all = DATA ? DATA.records : [];
   var tb = $('#tbFd');
   if(!all.length){
@@ -2040,7 +2045,7 @@ function initUI(){
   /* Tab2 交互 */
   $('#q').addEventListener('input', debounce(function(){ S2.q = $('#q').value.trim(); dataRender(); },130));
   $('#fStatus').addEventListener('change', function(){ S2.st = $('#fStatus').value; dataRender(); });
-  $('#resetQ').addEventListener('click', function(){ S2.q=''; S2.st='all'; S2.k='subscribeDate'; S2.dir=1; $('#q').value=''; $('#fStatus').value='all'; sortMarks(); dataRender(); });
+  $('#resetQ').addEventListener('click', function(){ S2.q=''; S2.st='all'; S2.k='subscribeDate'; S2.dir=-1; $('#q').value=''; $('#fStatus').value='all'; sortMarks(); dataRender(); });
   $$('#tblData thead th').forEach(function(th){
     th.addEventListener('click', function(){
       var k = th.getAttribute('data-k');
