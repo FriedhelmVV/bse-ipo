@@ -160,6 +160,9 @@ parse 后 `{ code:1, msg:'success', data:{ answer:'<markdown 表格>', indicator
 | `listingDate` | `YYYY-MM-DD`\|null | — | raw.profile.listingDate ?? universe.listingDate | null |
 | `status` | `'upcoming'\|'subscribed'\|'listed'` | — | 见下 | 必填 |
 | `listingToday` | boolean | — | `status==='listed' && listingDate === today`，见下 | 必填 |
+| `subscribeToday` | boolean | — | `subscribeDate === today`，见下「四个时点」 | 必填 |
+| `subscribeTomorrow` | boolean | — | `subscribeDate === today+1`，见下「四个时点」 | 必填 |
+| `listingTomorrow` | boolean | — | `listingDate === today+1`，见下「四个时点」 | 必填 |
 | `issuePrice` | number\|null | 元 | raw.events.issuePrice | null |
 | `peRatio` | number\|null | 倍 | raw.events.peRatio | null |
 | `subscribeCapShares` | number\|null | 股 | raw.events.subscribeCapShares | null |
@@ -215,6 +218,28 @@ parse 后 `{ code:1, msg:'success', data:{ answer:'<markdown 表格>', indicator
 `listingDate=2026-10-15`，而 `today=2026-10-13`）此刻**还没有首日行情**，必须算 `subscribed`，
 否则会凭空多出一条 `firstDay=null` 的"已上市"记录，也会把「已申购待上市」这个工作台主打分组清空。
 `build/verify.cjs` 会按上面的规则逐条复算并断言。
+
+### 「四个时点」高亮 —— `subscribeToday` / `subscribeTomorrow` / `listingToday` / `listingTomorrow`
+
+四个布尔字段，全部由 `build/build-seed.cjs` 在**种子生成日**算好写进记录（`addDaysYmd(today,1)` 得到「明天」）：
+
+| 字段 | 判据 | 页面文案 |
+|---|---|---|
+| `subscribeToday` | `subscribeDate === today` | 今日申购 |
+| `subscribeTomorrow` | `subscribeDate === today+1` | 明日申购 |
+| `listingToday` | `status==='listed' && listingDate === today` | 今日上市 |
+| `listingTomorrow` | `listingDate === today+1` | 明日上市 |
+
+页面用法（`北交所打新工作台.html`）：
+- `hlOf(r)` 按优先级 **今日上市 > 明日上市 > 今日申购 > 明日申购** 返回命中的键（或 null）；
+- `statusTxtOf(r)` = 命中文案 ?? 三分法文案；`statusSpan(r)` 在此基础上叠加 `.status.hl` 金色强调类；
+- 申购清单整卡加 `.ipoc.hl`（描金边 + 序号块点亮），「打新数据 / 资金档位分布」表格行加 `tr.hl`，
+  简称下方的 `.pill` 直接显示命中文案（`statusPill(st, hlKey)`）；
+- `headTxt(r)` 优先输出「就是今天申购 / 明天申购 / 明天上市 · 上市日 …」。
+
+⚠ 与 `listingToday` 同一条铁律：**判定一律读种子里的字段**，绝不用浏览器当天时间重算 —— 页面在次日
+00:00 种子重建前打开时，浏览器日期比种子生成日多一天，重算会把「今日申购」显示成「明日申购」。
+⚠ 「明日」按**自然日 +1**，不跳周末：申购日/上市日只可能是交易日，+1 落在非交易日时天然不会命中任何记录。
 
 ### firstDay
 
