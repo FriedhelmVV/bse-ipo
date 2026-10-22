@@ -156,6 +156,23 @@ node build\verify.cjs
 - 次日起 `listingDate < today` → `listingToday=false` → 自动退出清单，不需要任何清理逻辑。
 - ⚠ 页面一律读种子里的 `r.listingToday`，**不要用浏览器当天时间重算**：页面在每天 00:00 种子重建之前打开时，浏览器日期会比种子生成日多一天，两边会打架（`status` 用的是种子生成日）。
 
+#### 「四个时点」高亮：今日申购 / 明日申购 / 今日上市 / 明日上市
+
+用户要求（`m06106`）：**每天更新时，把「明日申购、当天申购、明日上市、当天上市」的新股高亮出来**，一眼就能看到今天该干什么、明天要准备什么。
+
+- 实现方式与 `listingToday` 同一套铁律：**四个布尔字段在 `build/build-seed.cjs` 里按种子生成日算好**，页面只读，绝不拿浏览器日期重算。
+  - `subscribeToday` ＝ `subscribeDate === today`
+  - `subscribeTomorrow` ＝ `subscribeDate === today + 1`（`addDaysYmd(today, 1)`）
+  - `listingToday` ＝ `listingDate === today`
+  - `listingTomorrow` ＝ `listingDate === today + 1`
+- 优先级（`HL_ORDER`）：今日上市 > 明日上市 > 今日申购 > 明日申购；一只标的只显示最靠前的那一个（不会同时挂两个徽标）。
+- 页面表现（`北交所打新工作台.html`）：
+  - 徽标文案走 `statusTxtOf(r)`；命中时 `statusSpan()` 输出 `.status.hl`（金色描边＋光晕），清单卡片整卡加 `.ipoc.hl`（描金边＋序号变金底），**「打新数据」表命中行加 `tr.hl`（金色左侧竖条＋淡金底）**；
+  - 卡片右侧时点文案（`headTxt`）：`今天上市 · 上市日 …` / `明天上市 · 上市日 …` / `就是今天申购` / `明天申购`；
+  - 「资金档位分布」表的「备注」列也带 `今天申购 / 明天申购 / 明天上市`。
+- ⚠ 「明日」按**自然日 +1** 算，不跳周末：周五看到的「明日」是周六，而北交所不会在周六申购/上市，所以那天自然不命中 —— 这条是有意的，不要改成「下一个交易日」（页面没有交易日历，猜比不猜更糟）。
+- 闸门：`verify.cjs` 静态契约＋逐条复算；`test-build-seed.cjs` 三个基准日覆盖四种命中；`verify-real.cjs` 的 `[C7]` 段逐卡逐行比对 `.hl` 类、文案、金色样式；`verify-live.cjs` 校验线上四个字段与标记齐全。
+
 ### 五张测算卡（在展开体里）
 
 只有 `status !== 'listed'`（即还没上市）的标的才渲染这五张卡；已上市的不再给申购测算。
@@ -163,7 +180,7 @@ node build\verify.cjs
 | 卡片 | 内容 | 数据来源 |
 | --- | --- | --- |
 | 打新门槛测算 | 16 档「参与打新资金」→ 1 手正股门槛、2~5 手门槛、顶格申购中签股数。三个输入框（参与资金 / 网上发行数量 / 顶格资金）可改，表格实时重算 | 页面按 `plan` 实时算，**不预生成进数据** |
-| 收益率弹性测算 | **只按顶格申购算**：在假设的 PE 区间（起始 PE / 步长可改）下，顶格申购的收益率，以及对应**年化收益率**（资金占用 9 天分段加权：申购日→中签公布日 2 天按顶格资金全额，公布日→上市日 7 天按中签股数 × 发行价）。**属情景假设，非预测** | 同上 |
+| 收益率弹性测算 | **只按顶格申购算**：在假设的 PE 区间（起始 PE / **步长默认 10 倍**，档位 20/30/40/50/60，两个输入框可改）下，顶格申购的收益率，以及对应**年化收益率**（资金占用 9 天分段加权：申购日→中签公布日 2 天按顶格资金全额，公布日→上市日 7 天按中签股数 × 发行价）。**属情景假设，非预测** | 同上 |
 | 可比公司估值 | 可比公司 / 证券代码 / PE / PB / 总市值 + 算术平均行 + 「发行 PE 较行业静态 PE 折价/溢价百分之几」 | 名单 `get_stock_info` 的官方「可比公司」字段；估值 `get_stock_info`；行业 PE `get_stock_events` |
 | 公司基本情况 | 公司全称 / 成立日期 / 注册资本 / 注册地址 / 所属行业 / 实际控制人 / 保荐机构 / 员工总数 / 发行后总股本 / 主营业务 + 所属概念、主要产品名条 | `get_stock_info` 结构化字段为主，公告片段只补空洞 |
 | 财务趋势 | 近三年 + 最新一期营收与净利柱图（`class="chartbox inline-chart"`）+ 6 列表（报告期 / 营收 / 净利 / 营收同比 / 毛利率 / ROE） | `get_stock_financials` |
@@ -271,7 +288,7 @@ bse-ipo/
     - **保荐机构（`company.sponsor`）要单独补问一次**：它时灵时不灵 —— 2026-10-16 实测同一轮里 `920296.BJ` 正常返回「国元证券股份有限公司」，而 `920285.BJ` / `920196.BJ` 的合并问法（`<code>的保荐机构、所属行业、所属概念、员工人数`）返回空。修法是 `tools/fetch.cjs` 步骤 **5b**：合并问法结束后若 `!isPresent(infoCompany.sponsor)`，再单独问 `${code}的保荐机构` 并用 `parseCompanyFromInfo` 取 `首发保荐人`（`stats.fundCalls++`）。**只在缺失时才多发一次，稳态成本 0**；仍拿不到就留 null，页面按「缺项不渲染」整行不显示，**不猜**。`build/verify-real.cjs` 的断言因此写成「有值就逐字对上、没值则必须整行不渲染」。
     - `fund` 只对未上市标的产出；`noticeText` / `compCandidates` 是审计用的中间态，**绝不进 `data/ipo.json`、更不进内联 seed**（公告正文里偶有 U+FFFD，会污染源码文本卫生闸门）。
     - 「可比公司」名单来自 `get_stock_info` 的官方字段，名单里本来就有未上市/非 A 股主体，取不到代码是正常的，页面显示「未匹配」而不是报错。
-11. **收益率弹性测算只按顶格申购口径算**，并同时给出年化收益率。
+11. **收益率弹性测算只按顶格申购口径算**，并同时给出年化收益率。PE 步长默认 **10 倍**（档位 20/30/40/50/60）——`var DT = { …, peStep:10, … }`，改默认值要在 `verify.cjs` 的「PE 步长默认 10」段同步。
     - 表一「顶格申购的收益率测算」：行 = 6 个资金档（`f0` 起每 +100 亿），列 = 5 个 PE 档；`顶格收益率 = 发行价 × 涨幅 × 顶格中签股数 ÷ 顶格资金`。
     - 表二「顶格申购的年化收益率」：形状同上，**资金占用按两段加权**（单位 万元·天）：
       ```
@@ -303,14 +320,15 @@ bse-ipo/
     - 加完条目后要跑一次 `node tools\fetch.cjs`（别加 `--codes`，那样会跳过池子合并）才能让它进池子；`build/verify.cjs` 第 `[12]` 段会断言「关注清单里的每一只都已并进 `universe.json`」。
 18. **所有「当日缓存」的失效键是「市场日」，不是自然日。** `tools/fetch.cjs` 里的 `marketYmd()`（与 `tools/daily-update.cjs` 的 `marketDay()` 同一套算法）用在两处：股票池第二路的 `cachedUnlistedOn !== marketYmd()`、基本面 `fundFetchedOn === marketYmd()`。写成 `todayYmd()` 的后果是：新周期开跑那天会**复用前一天那份属于上一个周期的池子**，等于整轮没重问 —— 这正是 2026-10-16 天元重工没被发现的第二个成因（`unlistedFetchedOn` 仍是 `20261016`，而那天 20:47 已经写过一次）。
     - **三处开跑小时必须相等**：`tools/schedule.cjs` 的 `DEFAULT_TIME`（触发器）、`tools/daily-update.cjs` 的 `DAY_START_HOUR`（catch-up 判据）、`tools/fetch.cjs` 的 `DAY_START_HOUR`（缓存周期）。改一处必须改三处，`build/verify.cjs` 第 `[12]` 段会三向比对。
+19. **「四个时点」高亮由种子算，页面只读。** `subscribeToday` / `subscribeTomorrow` / `listingToday` / `listingTomorrow` 四个布尔全部在 `build/build-seed.cjs` 按种子生成日算出（`addDaysYmd(today, 1)` 拿「明天」），页面的 `hlOf()` / `statusSpan()` / `statusPill()` 只读字段。**页面里绝对不许出现 `addDays` 或 `new Date().getDate() + 1`** —— 页面在每天 00:00 重建种子之前打开时浏览器日期会比种子多一天，两边打架（`verify.cjs` 有反向断言）。详见 §三「四个时点」小节。
 
 ### 交付前验收（照抄即可）
 
 ```bat
 set N=C:\Users\p\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\node\bin\node.exe
-%N% build\test-build-seed.cjs        :: 离线回归：派生公式 / status 三分法（不联网）
-%N% build\verify.cjs                 :: 契约闸门：75 项，含内联 seed 与 ipo.json 顶层键逐项一致、自动更新自愈配置、新股发现通道
-%N% build\verify-real.cjs            :: 真实 93 条渲染：4 Tab 数值齐备 + 申购清单展开体五张卡 + 表格排序（105 项，无头 Chrome）
+%N% build\test-build-seed.cjs        :: 离线回归：派生公式 / status 三分法 / 四个时点（71 项，不联网）
+%N% build\verify.cjs                 :: 契约闸门：77 项，含内联 seed 与 ipo.json 顶层键逐项一致、自动更新自愈配置、新股发现通道、四个时点、PE 步长
+%N% build\verify-real.cjs            :: 真实 93 条渲染：4 Tab 数值齐备 + 申购清单展开体五张卡 + 表格排序 + 四时点高亮（113 项，无头 Chrome）
 %N% build\verify-real.cjs --shot     :: 同上，并出 docs/shots/real-*.png
 %N% build\verify-boot.cjs            :: 外部数据加载/降级四条路径
 %N% build\verify-serve.cjs           :: 静态服务真站点断言（mode=real）
