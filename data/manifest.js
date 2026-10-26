@@ -1,2 +1,2 @@
 /* 自动生成，勿手改。 */
-window.BSE_MANIFEST = {"schemaVersion":1,"generatedAt":"2026-10-25T16:01:35+00:00","today":"2026-10-26","counts":{"total":94,"listed":93,"subscribed":1,"upcoming":0},"hash":"1063284756db"};
+window.BSE_MANIFEST = {"schemaVersion":1,"generatedAt":"2026-10-26T16:01:36+00:00","today":"2026-10-27","counts":{"total":94,"listed":93,"subscribed":1,"upcoming":0},"hash":"d31760213da9"};
