@@ -4,7 +4,7 @@
 
 - 成品：`北交所打新工作台.html` —— 双击 `file://` 就能用，不联网、不装任何东西、不引任何 CDN。
 - 数据：**全部由同花顺 iFinD 自动取数生成**，不含任何手工抄录或演示数据；取不到的字段一律显示 `—`。
-- 更新：`tools/daily-update.cjs` **每天 00:00 起每小时**由 Windows 计划任务跑一遍（取数 → 构建 → 内联 → 断言 → 发布）；本「市场日」成功过就跳过，失败/被系统掐掉的下一小时自动补（见 §五「自动更新」）。
+- 更新：`tools/daily-update.cjs` **每天 00:00 起每小时**由 Windows 计划任务跑一遍（取数 → 构建 → 内联 → 断言 → 发布）；本「市场日」成功过就跳过，失败/被系统掐掉的下一小时自动补；跳过之前还会用 1 次调用探一下**有没有白天新公告的新股**，有就立刻补跑一轮（见 §六.20）。
 - 固定网址：**<https://friedhelmvv.github.io/bse-ipo/>** —— 由 `tools/publish-pages.cjs` 发布到 GitHub Pages（仓库 `FriedhelmVV/bse-ipo`，配置见 `tools/pages.json`）。
 
 > 数据来源：同花顺 iFinD。仅供研究参考，**不构成任何投资建议**。
@@ -69,7 +69,7 @@ node tools\schedule.cjs --dry-run              :: 只打印将注册的任务，
 补跑闸门 `--catch-up` 的判据是**「市场日」**：本地 **00:00 之前算前一天** —— 也就是「一次更新周期 = 当天 00:00 到当天 23:59」，同一市场日已经成功跑过就 `SKIP`，跨市场日一定跑。于是：
 
 - 00:00 那次失败/被掐掉 → 01:00、02:00… 每个整点自动重来，一直到 16:00；
-- 00:00 成功之后，当天剩下的所有触点全部 `SKIP`，直到第二天 00:00 才开新一轮；
+- 00:00 成功之后，当天剩下的触点在 `SKIP` 之前会先跑一次 **新股探测**（`tools/probe-new.cjs`，只花 1 次 iFinD 调用）：发现还没进池子的新公告新股就**立刻补跑一轮**，没有才真的 `SKIP`。这是为了补上「发行公告白天才发」这个洞（2026-10-27 森峰激光就是这么漏的），见 §六.20；
 - 起点小时**必须等于** `daily-update.cjs` 的 `DAY_START_HOUR`（现在都是 0），否则「本市场日跑过没有」会和触发器错位 —— `build/verify.cjs [11]` 会核对两者相等。
 - 起点取 0 时市场日的分界正好落在午夜，所以「市场日」就是 +08:00 的自然日，最容易理解；若改成别的整点（例如 `--time 07:00`），记得把 `daily-update.cjs` 与 `tools/fetch.cjs` 里的 `DAY_START_HOUR` 一起改，`verify.cjs [11]/[12]` 会三向比对。
 
@@ -237,6 +237,7 @@ bse-ipo/
 │  ├─ serve.cjs              只读静态服务
 │  ├─ publish-pages.cjs      发 GitHub Pages
 │  ├─ daily-update.cjs       每日编排（取数→构建→内联→断言→发布）
+│  ├─ probe-new.cjs          新股探测：1 次调用查「已公告未上市」池，新代码写进 data/watch.json（见 §六.20）
 │  ├─ schedule.cjs           注册/卸载计划任务 BseIpoDailyUpdate
 │  ├─ pages.json             仓库配置
 │  ├─ _peek.cjs              查看某只股票的原始缓存关键字段（排查用）
@@ -321,13 +322,19 @@ bse-ipo/
 18. **所有「当日缓存」的失效键是「市场日」，不是自然日。** `tools/fetch.cjs` 里的 `marketYmd()`（与 `tools/daily-update.cjs` 的 `marketDay()` 同一套算法）用在两处：股票池第二路的 `cachedUnlistedOn !== marketYmd()`、基本面 `fundFetchedOn === marketYmd()`。写成 `todayYmd()` 的后果是：新周期开跑那天会**复用前一天那份属于上一个周期的池子**，等于整轮没重问 —— 这正是 2026-10-16 天元重工没被发现的第二个成因（`unlistedFetchedOn` 仍是 `20261016`，而那天 20:47 已经写过一次）。
     - **三处开跑小时必须相等**：`tools/schedule.cjs` 的 `DEFAULT_TIME`（触发器）、`tools/daily-update.cjs` 的 `DAY_START_HOUR`（catch-up 判据）、`tools/fetch.cjs` 的 `DAY_START_HOUR`（缓存周期）。改一处必须改三处，`build/verify.cjs` 第 `[12]` 段会三向比对。
 19. **「四个时点」高亮由种子算，页面只读。** `subscribeToday` / `subscribeTomorrow` / `listingToday` / `listingTomorrow` 四个布尔全部在 `build/build-seed.cjs` 按种子生成日算出（`addDaysYmd(today, 1)` 拿「明天」），页面的 `hlOf()` / `statusSpan()` / `statusPill()` 只读字段。**页面里绝对不许出现 `addDays` 或 `new Date().getDate() + 1`** —— 页面在每天 00:00 重建种子之前打开时浏览器日期会比种子多一天，两边打架（`verify.cjs` 有反向断言）。详见 §三「四个时点」小节。
+20. **`--catch-up` 每天跑成功之后，白天还要靠「新股探测」兜住新公告。** 计划任务是 00:00 开跑，之后每小时的触点一旦判定「本市场日已成功」就 SKIP —— 但**发行公告是白天才发的**：2026-10-27 实测 `920085.BJ 森峰激光`（申购 2026-10-28）是在当天 00:00 那一轮**之后**才进 iFinD 选股索引的，于是当天全部触点都 SKIP，用户在页面上整天看不到这只新股（来问「为什么没有更新」）。
+    - 修法：`tools/probe-new.cjs` 只花 **1 次** iFinD 调用，用与 `tools/fetch.cjs` **一字不差**的 `UNLISTED_QUERY`（`北交所股票，上市日期为空，申购日期不为空`）问一次，拿回来的代码和 `data/raw/universe.json` 比对。
+    - 发现新代码时它**写进 `data/watch.json`**（第三路股票池），随后那一轮 `fetch` 走关注清单把新股票并进池子 —— 所以补跑**不额外花配额**（走 watch 那条现有通道）。
+    - `tools/daily-update.cjs` 的 `--catch-up` 在「本市场日已成功」分支里，**先 `probeNew()` 再决定 SKIP**：有新股就照常跑完整五步并记日志「探测到 N 只新公告新股…立刻补跑一轮」，没有才 SKIP。探测失败（断网 / iFinD 抖动）一律按「没有新股」处理，**绝不阻断 SKIP**（`probe-new.cjs` 自己 catch 后 `exit 0`）。
+    - `--explain-catch-up` 保持**只读**，不触发探测。
+    - `build/verify.cjs` 第 `[12]` 段钉住 4 条：`probe-new.cjs` 存在、两边 `UNLISTED_QUERY` 一致、探测结果会写 `data/watch.json`、`--catch-up` 的 SKIP 分支里 `probeNew()` 必须在 `SKIP` 输出**之前**（顺序反了等于没修）。
 
 ### 交付前验收（照抄即可）
 
 ```bat
 set N=C:\Users\p\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\node\bin\node.exe
 %N% build\test-build-seed.cjs        :: 离线回归：派生公式 / status 三分法 / 四个时点（71 项，不联网）
-%N% build\verify.cjs                 :: 契约闸门：77 项，含内联 seed 与 ipo.json 顶层键逐项一致、自动更新自愈配置、新股发现通道、四个时点、PE 步长
+%N% build\verify.cjs                 :: 契约闸门：80 项，含内联 seed 与 ipo.json 顶层键逐项一致、自动更新自愈配置、新股发现通道（含白天新股探测）、四个时点、PE 步长
 %N% build\verify-real.cjs            :: 真实 93 条渲染：4 Tab 数值齐备 + 申购清单展开体五张卡 + 表格排序 + 四时点高亮（113 项，无头 Chrome）
 %N% build\verify-real.cjs --shot     :: 同上，并出 docs/shots/real-*.png
 %N% build\verify-boot.cjs            :: 外部数据加载/降级四条路径
