@@ -85,6 +85,7 @@ data/manifest.js             —— 元信息
 - `code` 必填，`^\d{6}\.BJ$`；非法项静默跳过，文件缺失/损坏当空清单（**不能因为一个手写文件把整轮取数炸掉**）
 - `name` / `subscribeDate` 可省；`subscribeDate` 在池子里还没有它时用来填申购日期
 - 合并优先级：池子里的 `listingDate` / `subscribeDate` 更权威，关注清单只做「补进来」
+- **这个文件有两个写入者**：① 人工登记（iFinD 索引滞后时）；② `tools/probe-new.cjs` 的**白天新股探测**自动追加（发现「已公告未上市」池里出现池子外的代码就写进来，让随后那一轮 fetch 能并入，见 README §六.20）。自动追加只补 `code`/`name`/`subscribeDate`，已存在的条目不会被覆盖，`_comment` 原样保留。
 - 年份未知 → `codeYears` 记 `null`，任何 `--years` 过滤都保留它（否则未上市新股会被年份挡掉）
 - 加完条目要跑一次 `node tools\fetch.cjs`（**别加 `--codes`**，那会跳过池子合并）
 - `build/verify.cjs` 第 `[12]` 段断言「关注清单里的每一只都已并进 `universe.json`」
