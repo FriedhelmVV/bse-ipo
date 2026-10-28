@@ -213,7 +213,7 @@ parse 后 `{ code:1, msg:'success', data:{ answer:'<markdown 表格>', indicator
 | `北交所打新工作台.html` | `isListingToday(r)` / `inWorkbench(r)`；`ipocBodyHTML` 与 `detailCardsHTML` 的守卫是 `statusOf(r)==='listed' && !isListingToday(r)`；状态文案 `statusTxtOf(r)` 给「今日上市」 |
 
 ⚠ 判定一律读种子里的 `r.listingToday`，**不要在页面里用浏览器当天时间重算** —— 页面在种子重建
-（每天 00:00）之前打开时，浏览器日期会和种子生成日差一天，两边会打架。
+（每天 08:00）之前打开时，浏览器日期会和种子生成日差一天，两边会打架。
 
 ⚠ 不能只看"`listingDate` 是否非空"：已公告上市日但日期在未来的新股（实测 `920162.BJ` 莫森泰克
 `listingDate=2026-10-15`，而 `today=2026-10-13`）此刻**还没有首日行情**，必须算 `subscribed`，
@@ -239,7 +239,7 @@ parse 后 `{ code:1, msg:'success', data:{ answer:'<markdown 表格>', indicator
 - `headTxt(r)` 优先输出「就是今天申购 / 明天申购 / 明天上市 · 上市日 …」。
 
 ⚠ 与 `listingToday` 同一条铁律：**判定一律读种子里的字段**，绝不用浏览器当天时间重算 —— 页面在次日
-00:00 种子重建前打开时，浏览器日期比种子生成日多一天，重算会把「今日申购」显示成「明日申购」。
+08:00 种子重建前打开时，浏览器日期比种子生成日多一天，重算会把「今日申购」显示成「明日申购」。
 ⚠ 「明日」按**自然日 +1**，不跳周末：申购日/上市日只可能是交易日，+1 落在非交易日时天然不会命中任何记录。
 
 ### firstDay
